@@ -984,7 +984,7 @@ index 000000000..e44fe51b1
 +/* Base OpenHarmony target OS defines - used by architecture-specific headers */
 +#define OHOS_BASE_OS_CPP_BUILTINS()				\
 +  do {								\
-+    builtin_define ("__ohos__");				\
++    builtin_define ("__OHOS__");				\
 +    builtin_define ("__OpenHarmony__");				\
 +    builtin_define ("__MUSL__");				\
 +    builtin_assert ("target=ohos");				\
@@ -1307,7 +1307,7 @@ index eeb84f32d..1b5cd8bc5 100644
  __gthrw(pthread_self)
  __gthrw(pthread_detach)
 -#ifndef __BIONIC__
-+#if !defined(__BIONIC__) && !defined(__ohos__)
++#if !defined(__BIONIC__) && !defined(__OHOS__)
  __gthrw(pthread_cancel)
  #endif
  __gthrw(sched_yield)
