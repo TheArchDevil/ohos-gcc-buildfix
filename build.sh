@@ -20,9 +20,16 @@ BUILD_DIR="${SCRIPT_DIR}/build-ohos"
 INSTALL_PREFIX="${INSTALL_PREFIX:-${SCRIPT_DIR}/install}"
 SYSROOT="${SYSROOT:-}"
 
+# Binutils configuration
+BINUTILS_VERSION="${BINUTILS_VERSION:-2.43}"
+BINUTILS_SOURCE_DIR="${SCRIPT_DIR}/binutils-${BINUTILS_VERSION}"
+BINUTILS_BUILD_DIR="${SCRIPT_DIR}/build-binutils"
+BINUTILS_INSTALL_PREFIX="${BINUTILS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
+
 # Target configuration
-CBUILD="${CBUILD:-$(gcc -dumpmachine)}"
-CHOST="${CHOST:-${CBUILD}}"
+DEFAULT_CBUILD="$(gcc -dumpmachine)"
+CBUILD="${CBUILD:-${DEFAULT_CBUILD}}"
+CHOST="${CHOST:-}"
 CTARGET="${CTARGET:-aarch64-linux-ohos}"
 
 # Extract architecture from target triplet
@@ -153,9 +160,75 @@ error() {
 # Build Steps
 # ============================================================================
 
-prepare() {
-    msg "Preparing source directory..."
-    
+prepare_binutils() {
+    msg "Preparing binutils ${BINUTILS_VERSION} source directory..."
+
+    if [ ! -d "${BINUTILS_SOURCE_DIR}" ]; then
+        msg "Downloading binutils ${BINUTILS_VERSION}..."
+        local tarball="binutils-${BINUTILS_VERSION}.tar.xz"
+        if [ ! -f "${tarball}" ]; then
+            wget "https://ftp.gnu.org/gnu/binutils/${tarball}" || \
+                error "Failed to download binutils source"
+        fi
+
+        msg "Extracting binutils source..."
+        tar -xf "${tarball}" || error "Failed to extract binutils source"
+    fi
+
+    msg "Applying binutils patches..."
+    cd "${BINUTILS_SOURCE_DIR}"
+
+    for patch in "${SCRIPT_DIR}"/binutils-patches/*.patch; do
+        [ -f "${patch}" ] || continue
+        msg "Applying $(basename "${patch}")..."
+        patch -p1 -N -i "${patch}" || msg "Patch $(basename "${patch}") already applied or failed"
+    done
+
+    cd "${SCRIPT_DIR}"
+}
+
+build_binutils() {
+    prepare_binutils
+
+    msg "Configuring binutils for ${CTARGET}..."
+    mkdir -p "${BINUTILS_BUILD_DIR}"
+    cd "${BINUTILS_BUILD_DIR}"
+
+    local configure_args=(
+        "${BINUTILS_SOURCE_DIR}/configure"
+        "--prefix=${BINUTILS_INSTALL_PREFIX}"
+        "--build=${CBUILD}"
+        "--host=${CHOST}"
+        "--target=${CTARGET}"
+        "--disable-nls"
+        "--disable-werror"
+    )
+
+    if [ -n "${SYSROOT}" ]; then
+        configure_args+=("--with-sysroot=${SYSROOT}")
+    fi
+
+    "${configure_args[@]}" || error "Binutils configuration failed"
+
+    make -j"${JOBS}" MAKEINFO=true || error "Binutils build failed"
+    make install DESTDIR="${DESTDIR:-}" MAKEINFO=true || error "Binutils install failed"
+
+    cd "${SCRIPT_DIR}"
+}
+
+ensure_binutils() {
+    local expected_ld="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-ld"
+    if [ ! -x "${expected_ld}" ]; then
+        msg "Binutils not found at ${expected_ld}; building binutils..."
+        build_binutils
+    else
+        msg "Using existing binutils from ${BINUTILS_INSTALL_PREFIX}"
+    fi
+}
+
+prepare_gcc() {
+    msg "Preparing GCC source directory..."
+
     # Download GCC source if not present
     if [ ! -d "${SOURCE_DIR}" ]; then
         msg "Downloading GCC ${GCC_VERSION}..."
@@ -164,40 +237,51 @@ prepare() {
             wget "https://gcc.gnu.org/pub/gcc/releases/gcc-${GCC_VERSION}/${tarball}" || \
                 error "Failed to download GCC source"
         fi
-        
+
         msg "Extracting GCC source..."
         tar -xf "${tarball}" || error "Failed to extract GCC source"
     fi
-    
+
     # Apply patches
-    msg "Applying patches..."
+    msg "Applying GCC patches..."
     cd "${SOURCE_DIR}"
-    
+
     # Apply OHOS patch first
     if [ -f "${SCRIPT_DIR}/gcc-patches/0001-Add-OpenHarmony-OHOS-target-support-to-GCC.patch" ]; then
         patch -p1 -N -i "${SCRIPT_DIR}/gcc-patches/0001-Add-OpenHarmony-OHOS-target-support-to-GCC.patch" || \
             msg "OHOS patch already applied or failed"
     fi
-    
+
     # Apply other patches
     for patch in "${SCRIPT_DIR}"/gcc-patches/*.patch; do
         [ -f "${patch}" ] || continue
-        # Skip OHOS patch as it's already applied
         [[ "${patch}" =~ "0001-Add-OpenHarmony-OHOS" ]] && continue
-        
+
         msg "Applying $(basename "${patch}")..."
         patch -p1 -N -i "${patch}" || msg "Patch $(basename "${patch}") already applied or failed"
     done
-    
-    # Set BASE-VER
+
     echo "${GCC_VERSION}" > gcc/BASE-VER
-    
+
     cd "${SCRIPT_DIR}"
 }
 
 configure_gcc() {
+    ensure_binutils
+    prepare_gcc
+
     msg "Configuring GCC ${GCC_VERSION} for ${CTARGET}..."
-    
+
+    if [ -d "${BINUTILS_INSTALL_PREFIX}/bin" ]; then
+        export PATH="${BINUTILS_INSTALL_PREFIX}/bin:${PATH}"
+    fi
+
+    local extra_binutils_flags=""
+    local as_path="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-as"
+    local ld_path="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-ld"
+    [ -x "${as_path}" ] && extra_binutils_flags+=" --with-as=${as_path}"
+    [ -x "${ld_path}" ] && extra_binutils_flags+=" --with-ld=${ld_path}"
+
     # Create build directory
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
@@ -232,7 +316,19 @@ configure_gcc() {
     echo "  LANGUAGES=${LANGUAGES}"
     echo "  INSTALL_PREFIX=${INSTALL_PREFIX}"
     echo "  SYSROOT=${SYSROOT}"
+    echo "  CROSS_COMPILE=${CROSS_COMPILE}"
     echo ""
+
+    if [ -n "${CROSS_COMPILE}" ]; then
+        export AR_FOR_TARGET="${AR_FOR_TARGET:-${CROSS_COMPILE}ar}"
+        export AS_FOR_TARGET="${AS_FOR_TARGET:-${CROSS_COMPILE}as}"
+        export LD_FOR_TARGET="${LD_FOR_TARGET:-${CROSS_COMPILE}ld}"
+        export NM_FOR_TARGET="${NM_FOR_TARGET:-${CROSS_COMPILE}nm}"
+        export OBJDUMP_FOR_TARGET="${OBJDUMP_FOR_TARGET:-${CROSS_COMPILE}objdump}"
+        export OBJCOPY_FOR_TARGET="${OBJCOPY_FOR_TARGET:-${CROSS_COMPILE}objcopy}"
+        export RANLIB_FOR_TARGET="${RANLIB_FOR_TARGET:-${CROSS_COMPILE}ranlib}"
+        export STRIP_FOR_TARGET="${STRIP_FOR_TARGET:-${CROSS_COMPILE}strip}"
+    fi
     
     # Configure GCC
     "${SOURCE_DIR}/configure" \
@@ -265,6 +361,7 @@ configure_gcc() {
         ${CROSS_CONFIGURE} \
         ${BOOTSTRAP_CONFIGURE} \
         ${HASH_STYLE_CONFIGURE} \
+        ${extra_binutils_flags} \
         ${EXTRA_CONFIGURE_FLAGS:-} \
         || error "Configuration failed"
 }
@@ -282,18 +379,21 @@ install_gcc() {
     
     make install DESTDIR="${DESTDIR:-}" || error "Installation failed"
     
-    # Create symlinks
+    local real_prefix="${DESTDIR:-}${INSTALL_PREFIX}"
+    mkdir -p "${real_prefix}/bin"
+
+    # Create convenient compiler symlinks inside install prefix
     if [ "${CHOST}" = "${CTARGET}" ]; then
-        ln -sf gcc "${INSTALL_PREFIX}/bin/cc"
+        ln -sf gcc "${real_prefix}/bin/cc"
     fi
-    ln -sf "${CTARGET}-gcc" "${INSTALL_PREFIX}/bin/${CTARGET}-cc"
+    ln -sf "${CTARGET}-gcc" "${real_prefix}/bin/${CTARGET}-cc"
     
     msg "GCC installation complete"
 }
 
 clean() {
-    msg "Cleaning build directory..."
-    rm -rf "${BUILD_DIR}"
+    msg "Cleaning build directories..."
+    rm -rf "${BUILD_DIR}" "${BINUTILS_BUILD_DIR}"
 }
 
 # ============================================================================
@@ -307,15 +407,18 @@ GCC Build Script for OpenHarmony (OHOS) Target
 Usage: $0 [OPTIONS] [COMMAND]
 
 Commands:
-  prepare     Apply patches and prepare source
-  configure   Configure GCC build
-  build       Build GCC
-  install     Install GCC
-  all         Run all steps (default)
-  clean       Clean build directory
+    prepare       Download sources and apply patches for binutils and GCC
+    binutils      Build and install binutils only
+    configure     Ensure binutils exist and configure GCC
+    build         Build GCC
+    install       Install GCC
+    all           Run full pipeline (binutils + GCC)
+    clean         Clean build directories
 
 Options:
   --target=TARGET           Set target triplet (default: aarch64-linux-ohos)
+    --host=HOST               Set host triplet (default: auto-detected)
+    --build=BUILD             Set build triplet (default: auto-detected)
   --prefix=PREFIX           Set installation prefix (default: ./install)
   --sysroot=SYSROOT         Set sysroot path for cross-compilation
   --jobs=N                  Number of parallel jobs (default: $(nproc))
@@ -324,9 +427,14 @@ Options:
 
 Environment Variables:
   CTARGET                   Target triplet
+    CHOST                     Host triplet
+    CBUILD                    Build triplet
   INSTALL_PREFIX            Installation prefix
+    BINUTILS_VERSION          Binutils version (default: ${BINUTILS_VERSION})
+    BINUTILS_INSTALL_PREFIX   Binutils installation prefix (default: same as INSTALL_PREFIX)
   SYSROOT                   Sysroot path
   JOBS                      Number of parallel jobs
+    CROSS_COMPILE             Cross prefix override (default: target- when cross compiling)
   LANG_*                    Enable/disable specific languages (yes/no)
 
 Examples:
@@ -353,6 +461,12 @@ while [ $# -gt 0 ]; do
         --target=*)
             CTARGET="${1#*=}"
             ;;
+        --host=*)
+            CHOST="${1#*=}"
+            ;;
+        --build=*)
+            CBUILD="${1#*=}"
+            ;;
         --prefix=*)
             INSTALL_PREFIX="${1#*=}"
             ;;
@@ -365,7 +479,7 @@ while [ $# -gt 0 ]; do
         --enable-languages=*)
             LANGUAGES="${1#*=}"
             ;;
-        prepare|configure|build|install|all|clean)
+        prepare|binutils|configure|build|install|all|clean)
             COMMAND="$1"
             ;;
         *)
@@ -375,10 +489,32 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# Resolve defaults that depend on parsed values
+CHOST="${CHOST:-${CBUILD}}"
+
+# Determine cross-compilation context after parsing options
+if [ -z "${CROSS_COMPILE:-}" ]; then
+    if [ "${CHOST}" != "${CTARGET}" ]; then
+        CROSS_COMPILE="${CTARGET}-"
+    else
+        CROSS_COMPILE=""
+    fi
+fi
+export CROSS_COMPILE
+
+IS_NATIVE_BUILD=0
+if [ "${CHOST}" = "${CTARGET}" ]; then
+    IS_NATIVE_BUILD=1
+fi
+
 # Execute command
 case "${COMMAND}" in
     prepare)
-        prepare
+        prepare_binutils
+        prepare_gcc
+        ;;
+    binutils)
+        build_binutils
         ;;
     configure)
         configure_gcc
@@ -393,7 +529,7 @@ case "${COMMAND}" in
         clean
         ;;
     all)
-        prepare
+        build_binutils
         configure_gcc
         build_gcc
         install_gcc
