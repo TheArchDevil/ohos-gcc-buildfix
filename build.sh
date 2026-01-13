@@ -5,6 +5,15 @@
 
 set -e
 
+# CRITICAL FIX: Disable shell aliases/functions for diff and use absolute path
+# Some shell configurations define diff() with --color which breaks
+# autoconf's config.status script that uses diff for file comparison
+# Also ensure we use /bin/diff, not any custom diff in PATH
+unset -f diff
+alias diff='/bin/diff'
+export DIFF='/bin/diff'
+export PATH="/bin:/usr/bin:/usr/local/bin:${PATH}"
+
 # ============================================================================
 # Configuration Variables
 # ============================================================================
@@ -32,63 +41,84 @@ CBUILD="${CBUILD:-${DEFAULT_CBUILD}}"
 CHOST="${CHOST:-}"
 CTARGET="${CTARGET:-aarch64-linux-ohos}"
 
-# Extract architecture from target triplet
-case "${CTARGET}" in
-    aarch64-*)
-        CTARGET_ARCH="aarch64"
-        ARCH_CONFIGURE="--with-arch=armv8-a --with-abi=lp64"
-        ;;
-    arm*hf-*)
-        CTARGET_ARCH="armv7"
-        ARCH_CONFIGURE="--with-arch=armv7-a --with-tune=generic-armv7-a --with-fpu=vfpv3-d16 --with-float=hard --with-abi=aapcs-linux --with-mode=thumb"
-        ;;
-    arm*-*)
-        CTARGET_ARCH="arm"
-        ARCH_CONFIGURE="--with-arch=armv5te --with-tune=arm926ej-s --with-float=soft --with-abi=aapcs-linux"
-        ;;
-    x86_64-*)
-        CTARGET_ARCH="x86_64"
-        ARCH_CONFIGURE=""
-        SANITIZER_CONFIGURE="--enable-libsanitizer"
-        ;;
-    i?86-*)
-        CTARGET_ARCH="x86"
-        ARCH_CONFIGURE="--with-arch=i486 --with-tune=generic --enable-cld"
-        ;;
-    riscv64-*)
-        CTARGET_ARCH="riscv64"
-        ARCH_CONFIGURE="--with-arch=rv64gc --with-abi=lp64d --enable-autolink-libatomic"
-        ;;
-    mips64el-*)
-        CTARGET_ARCH="mips64el"
-        ARCH_CONFIGURE="--with-arch=mips3 --with-tune=mips64 --with-mips-plt --with-float=soft --with-abi=64"
-        ;;
-    mips64-*)
-        CTARGET_ARCH="mips64"
-        ARCH_CONFIGURE="--with-arch=mips3 --with-tune=mips64 --with-mips-plt --with-float=soft --with-abi=64"
-        ;;
-    mipsel-*)
-        CTARGET_ARCH="mipsel"
-        ARCH_CONFIGURE="--with-arch=mips32 --with-mips-plt --with-float=soft --with-abi=32"
-        ;;
-    mips-*)
-        CTARGET_ARCH="mips"
-        ARCH_CONFIGURE="--with-arch=mips32 --with-mips-plt --with-float=soft --with-abi=32"
-        ;;
-    *)
-        echo "Error: Unsupported target architecture: ${CTARGET}"
-        exit 1
-        ;;
-esac
+# Function to setup target-specific configuration
+# This is called after command line parsing to ensure --target is respected
+setup_target_config() {
+    # Extract architecture from target triplet
+    case "${CTARGET}" in
+        aarch64-*)
+            CTARGET_ARCH="aarch64"
+            ARCH_CONFIGURE="--with-arch=armv8-a --with-abi=lp64"
+            ;;
+        arm*hf-*)
+            CTARGET_ARCH="armv7"
+            ARCH_CONFIGURE="--with-arch=armv7-a --with-tune=generic-armv7-a --with-fpu=vfpv3-d16 --with-float=hard --with-abi=aapcs-linux --with-mode=thumb"
+            ;;
+        arm*-*)
+            CTARGET_ARCH="arm"
+            ARCH_CONFIGURE="--with-arch=armv5te --with-tune=arm926ej-s --with-float=soft --with-abi=aapcs-linux"
+            ;;
+        x86_64-*)
+            CTARGET_ARCH="x86_64"
+            ARCH_CONFIGURE=""
+            SANITIZER_CONFIGURE="--enable-libsanitizer"
+            ;;
+        i?86-*)
+            CTARGET_ARCH="x86"
+            ARCH_CONFIGURE="--with-arch=i486 --with-tune=generic --enable-cld"
+            ;;
+        riscv64-*)
+            CTARGET_ARCH="riscv64"
+            ARCH_CONFIGURE="--with-arch=rv64gc --with-abi=lp64d --enable-autolink-libatomic"
+            ;;
+        mips64el-*)
+            CTARGET_ARCH="mips64el"
+            ARCH_CONFIGURE="--with-arch=mips3 --with-tune=mips64 --with-mips-plt --with-float=soft --with-abi=64"
+            ;;
+        mips64-*)
+            CTARGET_ARCH="mips64"
+            ARCH_CONFIGURE="--with-arch=mips3 --with-tune=mips64 --with-mips-plt --with-float=soft --with-abi=64"
+            ;;
+        mipsel-*)
+            CTARGET_ARCH="mipsel"
+            ARCH_CONFIGURE="--with-arch=mips32 --with-mips-plt --with-float=soft --with-abi=32"
+            ;;
+        mips-*)
+            CTARGET_ARCH="mips"
+            ARCH_CONFIGURE="--with-arch=mips32 --with-mips-plt --with-float=soft --with-abi=32"
+            ;;
+        *)
+            echo "Error: Unsupported target architecture: ${CTARGET}"
+            exit 1
+            ;;
+    esac
 
-# Default sanitizer config (disabled for most architectures)
-SANITIZER_CONFIGURE="${SANITIZER_CONFIGURE:---disable-libsanitizer}"
+    # Default sanitizer config (disabled for most architectures)
+    SANITIZER_CONFIGURE="${SANITIZER_CONFIGURE:---disable-libsanitizer}"
 
-# Hash style configuration
-case "${CTARGET_ARCH}" in
-    mips*) HASH_STYLE_CONFIGURE="--with-linker-hash-style=sysv" ;;
-    *)     HASH_STYLE_CONFIGURE="--with-linker-hash-style=gnu" ;;
-esac
+    # Hash style configuration
+    case "${CTARGET_ARCH}" in
+        mips*) HASH_STYLE_CONFIGURE="--with-linker-hash-style=sysv" ;;
+        *)     HASH_STYLE_CONFIGURE="--with-linker-hash-style=gnu" ;;
+    esac
+
+    # Disable libitm for certain architectures
+    case "${CTARGET_ARCH}" in
+        arm*|mips*|riscv64) LIBITM="no" ;;
+    esac
+
+    # Quadmath support (x86/x86_64/ppc64le only) - disabled for cross-compilation
+    case "${CTARGET_ARCH}" in
+        x86|x86_64|ppc64le) LIBQUADMATH="no" ;;
+    esac
+
+    # Rebuild BOOTSTRAP_CONFIGURE with updated library settings
+    BOOTSTRAP_CONFIGURE="--enable-shared --enable-threads --enable-tls"
+    [ "${LIBGOMP}" = "no" ] && BOOTSTRAP_CONFIGURE="${BOOTSTRAP_CONFIGURE} --disable-libgomp"
+    [ "${LIBATOMIC}" = "no" ] && BOOTSTRAP_CONFIGURE="${BOOTSTRAP_CONFIGURE} --disable-libatomic"
+    [ "${LIBITM}" = "no" ] && BOOTSTRAP_CONFIGURE="${BOOTSTRAP_CONFIGURE} --disable-libitm"
+    [ "${LIBQUADMATH}" = "no" ] && ARCH_CONFIGURE="${ARCH_CONFIGURE} --disable-libquadmath"
+}
 
 # Language support
 LANG_CXX="${LANG_CXX:-yes}"
@@ -110,27 +140,12 @@ LANGUAGES="c"
 [ "${LANG_JIT}" = "yes" ] && LANGUAGES="${LANGUAGES},jit"
 
 # Library features
-LIBGOMP="${LIBGOMP:-yes}"
-LIBATOMIC="${LIBATOMIC:-yes}"
-LIBITM="${LIBITM:-yes}"
+# Note: In cross-compilation, these libraries require link tests which fail early
+# when GCC is not fully bootstrapped. Disable them by default for OHOS.
+LIBGOMP="${LIBGOMP:-no}"
+LIBATOMIC="${LIBATOMIC:-no}"
+LIBITM="${LIBITM:-no}"
 LIBQUADMATH="${LIBQUADMATH:-no}"
-
-# Disable libitm for certain architectures
-case "${CTARGET_ARCH}" in
-    arm*|mips*|riscv64) LIBITM="no" ;;
-esac
-
-# Quadmath support (x86/x86_64/ppc64le only)
-case "${CTARGET_ARCH}" in
-    x86|x86_64|ppc64le) LIBQUADMATH="yes" ;;
-esac
-
-# Build configuration
-BOOTSTRAP_CONFIGURE="--enable-shared --enable-threads --enable-tls"
-[ "${LIBGOMP}" = "no" ] && BOOTSTRAP_CONFIGURE="${BOOTSTRAP_CONFIGURE} --disable-libgomp"
-[ "${LIBATOMIC}" = "no" ] && BOOTSTRAP_CONFIGURE="${BOOTSTRAP_CONFIGURE} --disable-libatomic"
-[ "${LIBITM}" = "no" ] && BOOTSTRAP_CONFIGURE="${BOOTSTRAP_CONFIGURE} --disable-libitm"
-[ "${LIBQUADMATH}" = "no" ] && ARCH_CONFIGURE="${ARCH_CONFIGURE} --disable-libquadmath"
 
 # Cross-compilation configuration will be resolved during configure phase
 
@@ -295,6 +310,49 @@ configure_gcc() {
     # Set build environment
     export libat_cv_have_ifunc=no
     
+    # For cross-compilation to OHOS, we need to provide libtool cache variables
+    # to bypass dynamic linker detection tests that require running executables.
+    # OHOS uses musl-style dynamic linker paths.
+    if [ "${CHOST}" != "${CTARGET}" ]; then
+        case "${CTARGET}" in
+            *-linux-ohos*)
+                # Libtool cache variables for OHOS target
+                # These tell configure to skip link tests that require running executables
+                export lt_cv_deplibs_check_method='pass_all'
+                export lt_cv_file_magic_cmd='$MAGIC_CMD'
+                export lt_cv_file_magic_test_file=''
+                export lt_cv_ld_reload_flag='-r'
+                export lt_cv_nm_interface='BSD nm'
+                export lt_cv_objdir='.libs'
+                export lt_cv_path_LD="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-ld"
+                export lt_cv_path_NM="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-nm"
+                export lt_cv_prog_compiler_c_o='yes'
+                export lt_cv_prog_compiler_pic='-fPIC -DPIC'
+                export lt_cv_prog_compiler_pic_works='yes'
+                export lt_cv_prog_compiler_static_works='yes'
+                export lt_cv_prog_compiler_wl='-Wl,'
+                export lt_cv_prog_gnu_ld='yes'
+                export lt_cv_sys_global_symbol_pipe="sed -n -e 's/^.*[	 ]\\([ABCDGIRSTW][ABCDGIRSTW]*\\)[	 ][	 ]*\\([_A-Za-z][_A-Za-z0-9]*\\)\$/\\1 \\2 \\2/p' | sed '/ __gnu_lto/d'"
+                export lt_cv_sys_global_symbol_to_c_name_address="sed -n -e 's/^: \\([^ ]*\\) \$/  {\\\"\\1\\\", (void *) 0},/p' -e 's/^[ABCDGIRSTW]* \\([^ ]*\\) \\([^ ]*\\)\$/  {\\\"\\2\\\", (void *) \\&\\2},/p'"
+                export lt_cv_sys_global_symbol_to_cdecl="sed -n -e 's/^T .* \\(.*\\)\$/extern int \\1();/p' -e 's/^[ABCDGIRSTW]* .* \\(.*\\)\$/extern char \\1;/p'"
+                export lt_cv_sys_max_cmd_len='1572864'
+                
+                # Dynamic linker path for OHOS (musl-style)
+                case "${CTARGET_ARCH}" in
+                    x86_64)  export lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib' ;;
+                    aarch64) export lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib' ;;
+                    *)       export lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib' ;;
+                esac
+                export lt_cv_sys_lib_search_path_spec='/lib /usr/lib'
+                
+                # Additional cache variables to help libstdc++ configure
+                export glibcxx_cv_BSWAP='yes'
+                export ac_cv_func_sched_yield='yes'
+                export ac_cv_func_uselocale='yes'
+                ;;
+        esac
+    fi
+    
     # Configure flags for different build scenarios
     if [ "${CHOST}" != "${CTARGET}" ]; then
         # Cross-compilation: disable format-security warning
@@ -340,6 +398,9 @@ configure_gcc() {
     local cross_configure=()
     if [ "${CBUILD}" != "${CHOST}" ] || [ "${CHOST}" != "${CTARGET}" ]; then
         cross_configure+=("--disable-bootstrap")
+        # Note: We keep PIE enabled for cross-compilation because OHOS uses PIE.
+        # The t-ohos-crtstuff makefile fragment ensures crtbegin.o is compiled
+        # with PIC to be compatible with PIE executables.
     fi
     if [ "${CHOST}" != "${CTARGET}" ] && [ -n "${SYSROOT}" ]; then
         cross_configure+=("--with-sysroot=${SYSROOT}")
@@ -493,7 +554,7 @@ while [ $# -gt 0 ]; do
         --enable-languages=*)
             LANGUAGES="${1#*=}"
             ;;
-        prepare|binutils|configure|build|install|all|clean)
+        prepare|binutils|configure|build|install|all|clean|prepare_binutils)
             COMMAND="$1"
             ;;
         *)
@@ -513,6 +574,10 @@ fi
 
 # Resolve defaults that depend on parsed values
 CHOST="${CHOST:-${CBUILD}}"
+
+# Setup target-specific configuration AFTER parsing command line arguments
+# This ensures --target is properly respected
+setup_target_config
 
 # Determine cross-compilation context after parsing options
 if [ -z "${CROSS_COMPILE:-}" ]; then
@@ -535,6 +600,9 @@ case "${COMMAND}" in
         prepare_binutils
         apply_sysroot_patches
         prepare_gcc
+        ;;
+    prepare_binutils)
+        prepare_binutils
         ;;
     binutils)
         build_binutils
