@@ -190,11 +190,12 @@ jobs:
           for patch in gcc-patches/*.patch binutils-patches/*.patch sysroot-patches/*.patch; do
             if [ -f "$patch" ] && [ -s "$patch" ]; then
               echo "Checking: $patch"
-              # Check if patch has valid format
-              if head -1 "$patch" | grep -qE '^(diff|From|---|\+\+\+)'; then
+              # Find first non-empty, non-comment line and check if it's valid diff format
+              first_diff_line=$(grep -m1 -E '^(diff|From|---|\+\+\+|@@)' "$patch" || true)
+              if [ -n "$first_diff_line" ]; then
                 echo "  ✓ Valid patch format"
               else
-                echo "  ✗ Invalid patch format"
+                echo "  ✗ Invalid patch format - no diff headers found"
                 exit 1
               fi
             fi
