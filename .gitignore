@@ -4,3 +4,4 @@ binutils-2*
 gcc-15*
 build-*
 install
+build.log
