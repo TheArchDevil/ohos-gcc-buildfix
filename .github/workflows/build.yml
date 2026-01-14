@@ -1,0 +1,232 @@
+name: Build GCC Cross-Compiler for OpenHarmony
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target triplet (e.g., x86_64-linux-ohos)'
+        required: false
+        default: 'x86_64-linux-ohos'
+      debug:
+        description: 'Enable debug mode'
+        required: false
+        default: 'false'
+
+env:
+  # NDK download URL - update this when new versions are released
+  NDK_URL: 'https://cidownload.openharmony.cn/version/Daily_Version/LLVM-19/20260114_061434/version-Daily_Version-LLVM-19-20260114_061434-LLVM-19.tar.gz'
+
+jobs:
+  # Build matrix for multiple architectures
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-ohos
+          - aarch64-linux-ohos
+        include:
+          - target: x86_64-linux-ohos
+            arch: x86_64
+          - target: aarch64-linux-ohos
+            arch: aarch64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          
+          # Remove unnecessary large packages
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc g++ \
+            make \
+            flex bison \
+            texinfo \
+            libgmp-dev \
+            libmpfr-dev \
+            libmpc-dev \
+            libisl-dev \
+            zlib1g-dev \
+            libzstd-dev \
+            wget curl \
+            tar xz-utils \
+            file \
+            python3 \
+            autoconf automake libtool \
+            pkg-config
+
+      - name: Cache NDK sysroot
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ndk/sysroot
+          key: ndk-sysroot-${{ matrix.target }}-${{ hashFiles('sysroot-patches/*.patch') }}
+          restore-keys: |
+            ndk-sysroot-${{ matrix.target }}-
+
+      - name: Cache binutils build
+        id: cache-binutils
+        uses: actions/cache@v4
+        with:
+          path: |
+            install/bin/${{ matrix.target }}-*
+            install/${{ matrix.target }}
+            install/lib/bfd-plugins
+          key: binutils-${{ matrix.target }}-${{ hashFiles('binutils-patches/*.patch') }}
+
+      - name: Prepare sources (download NDK, apply patches)
+        run: |
+          chmod +x build.sh
+          ./build.sh --target=${{ matrix.target }} prepare
+
+      - name: Build binutils
+        if: steps.cache-binutils.outputs.cache-hit != 'true'
+        run: |
+          ./build.sh --target=${{ matrix.target }} binutils
+
+      - name: Configure GCC
+        run: |
+          ./build.sh --target=${{ matrix.target }} configure
+
+      - name: Build GCC
+        run: |
+          ./build.sh --target=${{ matrix.target }} --jobs=$(nproc) build
+
+      - name: Install GCC
+        run: |
+          ./build.sh --target=${{ matrix.target }} install
+
+      - name: Verify toolchain
+        run: |
+          echo "=== Toolchain verification ==="
+          export PATH="${PWD}/install/bin:${PATH}"
+          
+          # Check compiler version
+          echo "--- GCC version ---"
+          ${{ matrix.target }}-gcc --version
+          
+          echo "--- G++ version ---"
+          ${{ matrix.target }}-g++ --version
+          
+          # Check binutils
+          echo "--- Binutils ---"
+          ${{ matrix.target }}-ld --version
+          ${{ matrix.target }}-as --version
+          
+          # Test simple compilation
+          echo "--- Test C compilation ---"
+          echo 'int main() { return 0; }' > test.c
+          ${{ matrix.target }}-gcc -c test.c -o test.o
+          file test.o
+          
+          echo "--- Test C++ compilation ---"
+          echo 'int main() { return 0; }' > test.cpp
+          ${{ matrix.target }}-g++ -c test.cpp -o test_cpp.o
+          file test_cpp.o
+          
+          echo "=== Verification completed ==="
+
+      - name: Package toolchain
+        run: |
+          PACKAGE_NAME="gcc-ohos-${{ matrix.target }}"
+          mkdir -p artifacts
+          tar -cJf "artifacts/${PACKAGE_NAME}.tar.xz" -C install .
+          
+          # Generate checksums
+          cd artifacts
+          sha256sum "${PACKAGE_NAME}.tar.xz" > "${PACKAGE_NAME}.tar.xz.sha256"
+
+      - name: Upload toolchain artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcc-ohos-${{ matrix.target }}
+          path: artifacts/
+          retention-days: 7
+
+  # Quick syntax and patch validation (runs faster than full build)
+  validate:
+    name: Validate patches
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate patch files
+        run: |
+          echo "=== Validating patch file syntax ==="
+          
+          for patch in gcc-patches/*.patch binutils-patches/*.patch sysroot-patches/*.patch; do
+            if [ -f "$patch" ] && [ -s "$patch" ]; then
+              echo "Checking: $patch"
+              # Check if patch has valid format
+              if head -1 "$patch" | grep -qE '^(diff|From|---|\+\+\+)'; then
+                echo "  ✓ Valid patch format"
+              else
+                echo "  ✗ Invalid patch format"
+                exit 1
+              fi
+            fi
+          done
+          
+          echo "=== All patches validated ==="
+
+      - name: Check build script syntax
+        run: |
+          bash -n build.sh
+          echo "✓ build.sh syntax OK"
+
+  # Create release when tagged
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

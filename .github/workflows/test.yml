@@ -1,0 +1,143 @@
+name: Test Toolchain
+
+on:
+  workflow_run:
+    workflows: ["Build GCC Cross-Compiler for OpenHarmony"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: 'Run ID of the build workflow to test'
+        required: false
+
+jobs:
+  test:
+    name: Test ${{ matrix.target }} toolchain
+    runs-on: ubuntu-22.04
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-ohos
+          - aarch64-linux-ohos
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download toolchain artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gcc-ohos-${{ matrix.target }}
+          path: toolchain-archive
+          run-id: ${{ github.event.workflow_run.id || inputs.artifact_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Extract toolchain
+        run: |
+          mkdir -p toolchain
+          if [ -f toolchain-archive/gcc-ohos-${{ matrix.target }}.tar.xz ]; then
+            tar -xJf toolchain-archive/gcc-ohos-${{ matrix.target }}.tar.xz -C toolchain
+          else
+            echo "Artifact not found, skipping test"
+            exit 0
+          fi
+
+      - name: Setup test environment
+        run: |
+          export PATH="${PWD}/toolchain/bin:${PATH}"
+          echo "PATH=${PWD}/toolchain/bin:${PATH}" >> $GITHUB_ENV
+          
+          # Verify toolchain is available
+          which ${{ matrix.target }}-gcc || exit 1
+
+      - name: Test C compilation
+        run: |
+          cat > test_hello.c << 'EOF'
+          #include <stdio.h>
+          
+          int main() {
+              printf("Hello from OpenHarmony GCC!\n");
+              return 0;
+          }
+          EOF
+          
+          ${{ matrix.target }}-gcc -c test_hello.c -o test_hello.o
+          file test_hello.o
+
+      - name: Test C++ compilation
+        run: |
+          cat > test_cpp.cpp << 'EOF'
+          #include <iostream>
+          #include <vector>
+          #include <string>
+          
+          int main() {
+              std::vector<std::string> items = {"Hello", "from", "OpenHarmony", "GCC"};
+              for (const auto& item : items) {
+                  std::cout << item << " ";
+              }
+              std::cout << std::endl;
+              return 0;
+          }
+          EOF
+          
+          ${{ matrix.target }}-g++ -c test_cpp.cpp -o test_cpp.o
+          file test_cpp.o
+
+      - name: Test optimization levels
+        run: |
+          cat > test_opt.c << 'EOF'
+          int factorial(int n) {
+              if (n <= 1) return 1;
+              return n * factorial(n - 1);
+          }
+          
+          int main() {
+              return factorial(10) > 0 ? 0 : 1;
+          }
+          EOF
+          
+          for opt in 0 1 2 3 s; do
+            echo "Testing -O${opt}..."
+            ${{ matrix.target }}-gcc -O${opt} -c test_opt.c -o test_opt_O${opt}.o
+          done
+
+      - name: Test with debug info
+        run: |
+          cat > test_debug.c << 'EOF'
+          int main() {
+              int x = 42;
+              return x - 42;
+          }
+          EOF
+          
+          ${{ matrix.target }}-gcc -g -c test_debug.c -o test_debug.o
+          file test_debug.o
+
+      - name: Test position-independent code
+        run: |
+          cat > test_pic.c << 'EOF'
+          int global_var = 100;
+          
+          int get_value(void) {
+              return global_var;
+          }
+          EOF
+          
+          ${{ matrix.target }}-gcc -fPIC -c test_pic.c -o test_pic.o
+          file test_pic.o
+
+      - name: Summary
+        run: |
+          echo "=== Test Summary for ${{ matrix.target }} ==="
+          echo "✓ C compilation: PASSED"
+          echo "✓ C++ compilation: PASSED"
+          echo "✓ Optimization levels: PASSED"
+          echo "✓ Debug info: PASSED"
+          echo "✓ Position-independent code: PASSED"
+          echo "=================================="
