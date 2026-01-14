@@ -37,8 +37,10 @@ gcc/ChangeLog:
 	* config/arm/arm-ohos.h: New file. ARM-specific OHOS configuration
 	with EABI support and float ABI variants (soft/hard float).
 	* config/arm/t-arm-ohos: New file. ARM OHOS makefile fragment.
-	* config/i386/i386-ohos.h: New file. x86/x86_64-specific OHOS
-	configuration supporting both 32-bit and 64-bit targets.
+	* config/i386/ohos.h: New file. i386-specific OHOS configuration
+	for 32-bit x86 targets.
+	* config/i386/ohos64.h: New file. x86_64-specific OHOS configuration
+	for 64-bit x86 targets.
 	* config/mips/mips-ohos.h: New file. MIPS-specific OHOS configuration
 	supporting both big-endian and little-endian variants.
 	* config/ohos-paths.h: New file. OHOS filesystem layout definitions
@@ -57,44 +59,39 @@ libcpp/ChangeLog:
 
 libgcc/ChangeLog:
 
-	* config.host: Add aarch64*-*-linux-ohos target configuration with
-	software floating point support, LSE atomics, and unwind support.
-	* gthr-posix.h (defined): Exclude pthread_cancel on OHOS targets
+	* config.host: Add OHOS target configurations for aarch64, arm,
+	i386/x86_64, riscv, and mips architectures with appropriate
+	unwind and atomic support.
+	* config/t-ohos-crtstuff: New file. OHOS-specific CRT object
+	compilation flags.
+	* gthr-posix.h: Exclude pthread_cancel on OHOS targets
 	(similar to Bionic) as it's not supported by musl libc in OHOS.
 
 libstdc++-v3/ChangeLog:
 
-	* configure.host: Add linux-ohos case to use generic OS headers,
-	consistent with musl-based Linux distributions.
+* configure.host: Add linux-ohos case to use generic OS headers,
+consistent with musl-based Linux distributions.
 ---
  config.sub                        |   4 +-
- gcc/config.gcc                    |  87 ++++++++++++++++-
- gcc/config/aarch64/aarch64-ohos.h | 141 +++++++++++++++++++++++++++
- gcc/config/aarch64/t-aarch64-ohos |  28 ++++++
- gcc/config/arm/arm-ohos.h         | 131 +++++++++++++++++++++++++
- gcc/config/arm/t-arm-ohos         |  28 ++++++
- gcc/config/i386/i386-ohos.h       | 125 ++++++++++++++++++++++++
- gcc/config/mips/mips-ohos.h       | 140 +++++++++++++++++++++++++++
- gcc/config/ohos-paths.h           |  74 +++++++++++++++
- gcc/config/ohos.h                 | 152 ++++++++++++++++++++++++++++++
- gcc/config/riscv/riscv-ohos.h     | 131 +++++++++++++++++++++++++
+ gcc/config.gcc                    |  87 +++++++++++++++++++-
+ gcc/config/aarch64/aarch64-ohos.h | 138 +++++++++++++++++++++++++++++++
+ gcc/config/aarch64/t-aarch64-ohos |  28 +++++++
+ gcc/config/arm/arm-ohos.h         | 125 ++++++++++++++++++++++++++++
+ gcc/config/arm/t-arm-ohos         |  28 +++++++
+ gcc/config/i386/ohos.h            | 111 +++++++++++++++++++++++++
+ gcc/config/i386/ohos64.h          | 111 +++++++++++++++++++++++++
+ gcc/config/mips/mips-ohos.h       | 134 ++++++++++++++++++++++++++++++
+ gcc/config/ohos-paths.h           |  72 ++++++++++++++++
+ gcc/config/ohos.h                 | 152 ++++++++++++++++++++++++++++++++++
+ gcc/config/riscv/riscv-ohos.h     | 125 ++++++++++++++++++++++++++++
  gcc/config/t-ohos                 |   2 +
  gcc/system.h                      |   6 ++
- libcpp/system.h                   |   5 +
- libgcc/config.host                |   9 ++
+ libcpp/system.h                   |   5 ++
+ libgcc/config.host                | 169 +++++++++++++++++++++++++++++++++++++-
+ libgcc/config/t-ohos-crtstuff     |   4 +
  libgcc/gthr-posix.h               |   4 +-
  libstdc++-v3/configure.host       |   3 +
- 17 files changed, 1065 insertions(+), 5 deletions(-)
- create mode 100644 gcc/config/aarch64/aarch64-ohos.h
- create mode 100644 gcc/config/aarch64/t-aarch64-ohos
- create mode 100644 gcc/config/arm/arm-ohos.h
- create mode 100644 gcc/config/arm/t-arm-ohos
- create mode 100644 gcc/config/i386/i386-ohos.h
- create mode 100644 gcc/config/mips/mips-ohos.h
- create mode 100644 gcc/config/ohos-paths.h
- create mode 100644 gcc/config/ohos.h
- create mode 100644 gcc/config/riscv/riscv-ohos.h
- create mode 100644 gcc/config/t-ohos
+ 19 files changed, 1302 insertions(+), 6 deletions(-)
 
 diff --git a/config.sub b/config.sub
 index 38f3d037a..0a04e2db3 100755
@@ -119,7 +116,7 @@ index 38f3d037a..0a04e2db3 100755
  	uclinux-uclibc* )
  		;;
 diff --git a/gcc/config.gcc b/gcc/config.gcc
-index 087aaa7be..ae5524c36 100644
+index 087aaa7be..6d76255e8 100644
 --- a/gcc/config.gcc
 +++ b/gcc/config.gcc
 @@ -920,6 +920,9 @@ case ${target} in
@@ -159,10 +156,10 @@ index 087aaa7be..ae5524c36 100644
 +		 i386/gnu-user-common.h"
 +	case ${target} in
 +	i[34567]86-*-linux-ohos*)
-+		tm_file="${tm_file} linux.h i386/linux-common.h i386/linux.h i386/i386-ohos.h"
++		tm_file="${tm_file} linux.h i386/linux-common.h i386/linux.h i386/ohos.h linux-android.h"
 +		;;
 +	x86_64-*-linux-ohos*)
-+		tm_file="${tm_file} i386/x86-64.h i386/gnu-user64.h linux.h i386/linux-common.h i386/linux64.h i386/i386-ohos.h"
++		tm_file="${tm_file} i386/x86-64.h i386/gnu-user64.h linux.h i386/linux-common.h i386/linux64.h i386/ohos64.h linux-android.h"
 +		;;
 +	esac
 +	gas=yes gnu_ld=yes
@@ -246,10 +243,10 @@ index 087aaa7be..ae5524c36 100644
  			  echo "Unsupported target ${target}." 1>&2
 diff --git a/gcc/config/aarch64/aarch64-ohos.h b/gcc/config/aarch64/aarch64-ohos.h
 new file mode 100644
-index 000000000..5b3425fc1
+index 000000000..dd0b32002
 --- /dev/null
 +++ b/gcc/config/aarch64/aarch64-ohos.h
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,138 @@
 +/* Definitions for AArch64 running OpenHarmony (OHOS).
 +   Copyright (C) 2024 Free Software Foundation, Inc.
 +
@@ -328,30 +325,30 @@ index 000000000..5b3425fc1
 +#undef STANDARD_STARTFILE_PREFIX_2
 +#define STANDARD_STARTFILE_PREFIX_2 "/lib/"
 +
-+/* Add architecture-specific library directories for OHOS */
++/* Library directories for OHOS - use flat structure without arch subdirs */
 +#undef MD_EXEC_PREFIX
-+#define MD_EXEC_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_EXEC_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX
-+#define MD_STARTFILE_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX_1
-+#define MD_STARTFILE_PREFIX_1 "/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX_1 "/lib/"
 +
-+/* Override STARTFILE and ENDFILE specs to use architecture-specific paths */
++/* Override STARTFILE and ENDFILE specs - OHOS uses flat /usr/lib/ structure */
 +#undef STARTFILE_SPEC
 +#define STARTFILE_SPEC \
 +  "%{!shared: \
-+     %{pg|p|profile:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/gcrt1.o%s; \
-+       pie:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/Scrt1.o%s; \
-+       :%R/usr/lib/" OHOS_ARCH_LIB_DIR "/crt1.o%s}} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crti.o%s \
++     %{pg|p|profile:%R/usr/lib/crt1.o%s; \
++       pie:%R/usr/lib/Scrt1.o%s; \
++       :%R/usr/lib/crt1.o%s}} \
++   %R/usr/lib/crti.o%s \
 +   %{static:crtbeginT.o%s;shared|pie:crtbeginS.o%s;:crtbegin.o%s}"
 +
 +#undef ENDFILE_SPEC
 +#define ENDFILE_SPEC \
 +  "%{shared|pie:crtendS.o%s;:crtend.o%s} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crtn.o%s"
++   %R/usr/lib/crtn.o%s"
 +
 +#ifdef LINK_SPEC
 +#undef LINK_SPEC
@@ -367,9 +364,7 @@ index 000000000..5b3425fc1
 +    "%{static:-static}} "					\
 +  "%{mfix-cortex-a53-835769:--fix-cortex-a53-835769} "		\
 +  "%{mfix-cortex-a53-843419:--fix-cortex-a53-843419} "		\
-+  "-L%R/usr/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/usr/lib " 						\
-+  "-L%R/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/lib "
 +
 +/* Default to little endian */
@@ -426,10 +421,10 @@ index 000000000..2ec312e61
 +MULTILIB_OSDIRNAMES += mabi.ilp32=../libilp32$(call if_multiarch,:aarch64$(AARCH_BE)-linux-ohos_ilp32)
 diff --git a/gcc/config/arm/arm-ohos.h b/gcc/config/arm/arm-ohos.h
 new file mode 100644
-index 000000000..b2785b4ed
+index 000000000..0f75274b5
 --- /dev/null
 +++ b/gcc/config/arm/arm-ohos.h
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,125 @@
 +/* Definitions for ARM running OpenHarmony (OHOS).
 +   Copyright (C) 2024 Free Software Foundation, Inc.
 +
@@ -502,30 +497,30 @@ index 000000000..b2785b4ed
 +#undef STANDARD_STARTFILE_PREFIX_2
 +#define STANDARD_STARTFILE_PREFIX_2 "/lib/"
 +
-+/* Add architecture-specific library directories for OHOS */
++/* Library directories for OHOS - use flat structure without arch subdirs */
 +#undef MD_EXEC_PREFIX
-+#define MD_EXEC_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_EXEC_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX
-+#define MD_STARTFILE_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX_1
-+#define MD_STARTFILE_PREFIX_1 "/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX_1 "/lib/"
 +
-+/* Override STARTFILE and ENDFILE specs to use architecture-specific paths */
++/* Override STARTFILE and ENDFILE specs - OHOS uses flat /usr/lib/ structure */
 +#undef STARTFILE_SPEC
 +#define STARTFILE_SPEC \
 +  "%{!shared: \
-+     %{pg|p|profile:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/gcrt1.o%s; \
-+       pie:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/Scrt1.o%s; \
-+       :%R/usr/lib/" OHOS_ARCH_LIB_DIR "/crt1.o%s}} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crti.o%s \
++     %{pg|p|profile:%R/usr/lib/crt1.o%s; \
++       pie:%R/usr/lib/Scrt1.o%s; \
++       :%R/usr/lib/crt1.o%s}} \
++   %R/usr/lib/crti.o%s \
 +   %{static:crtbeginT.o%s;shared|pie:crtbeginS.o%s;:crtbegin.o%s}"
 +
 +#undef ENDFILE_SPEC
 +#define ENDFILE_SPEC \
 +  "%{shared|pie:crtendS.o%s;:crtend.o%s} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crtn.o%s"
++   %R/usr/lib/crtn.o%s"
 +#ifdef LINK_SPEC
 +#undef LINK_SPEC
 +#endif
@@ -538,9 +533,7 @@ index 000000000..b2785b4ed
 +      "%{rdynamic:-export-dynamic} "				\
 +      "-dynamic-linker " OHOS_DYNAMIC_LINKER "} "		\
 +    "%{static:-static}} "					\
-+  "-L%R/usr/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/usr/lib " 						\
-+  "-L%R/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/lib "
 +
 +/* ARM OpenHarmony uses EABI by default */
@@ -591,12 +584,12 @@ index 000000000..f0a37350e
 +MULTIARCH_DIRNAME = $(call if_multiarch,arm$(ARM_BE)-linux-ohos)
 +
 +MULTILIB_OSDIRNAMES += mfloat-abi.hard=../lib/arm$(ARM_BE)-linux-ohoshf$(call if_multiarch,:arm$(ARM_BE)-linux-ohoshf)
-diff --git a/gcc/config/i386/i386-ohos.h b/gcc/config/i386/i386-ohos.h
+diff --git a/gcc/config/i386/ohos.h b/gcc/config/i386/ohos.h
 new file mode 100644
-index 000000000..244fb959c
+index 000000000..d4c21022f
 --- /dev/null
-+++ b/gcc/config/i386/i386-ohos.h
-@@ -0,0 +1,123 @@
++++ b/gcc/config/i386/ohos.h
+@@ -0,0 +1,111 @@
 +/* Definitions for x86_64 running OpenHarmony (OHOS).
 +   Copyright (C) 2024 Free Software Foundation, Inc.
 +
@@ -620,13 +613,126 @@ index 000000000..244fb959c
 +#define GCC_I386_OHOS_H
 +
 +/* Define architecture-specific dynamic linker - match LLVM getDynamicLinker() */
-+#if TARGET_X32
-+# define OHOS_ARCH_DYNAMIC_LINKER "/lib/ld-musl-x32.so.1"
-+#elif TARGET_64BIT
-+# define OHOS_ARCH_DYNAMIC_LINKER "/lib/ld-musl-x86_64.so.1"
-+#else
++
 +# define OHOS_ARCH_DYNAMIC_LINKER "/lib/ld-musl-i386.so.1"
++
++
++/* Include the generic OpenHarmony configuration */
++/* Note: ohos.h is already included via tm.h, no need to include again */
++
++/* x86/x86_64-specific OpenHarmony defines - override Linux configuration */
++#ifdef TARGET_OS_CPP_BUILTINS
++#undef TARGET_OS_CPP_BUILTINS
 +#endif
++#define TARGET_OS_CPP_BUILTINS()		\
++  do						\
++    {						\
++      /* Include base GNU and OHOS defines */ \
++      GNU_USER_TARGET_OS_CPP_BUILTINS ();	\
++      OHOS_BASE_OS_CPP_BUILTINS ();		\
++      /* x86-specific defines already in GNU_USER_TARGET_OS_CPP_BUILTINS */ \
++    }						\
++  while (0)
++
++/* OpenHarmony library paths for i386 */
++
++# define OHOS_ARCH_LIB_DIR "i386-linux-ohos"
++
++
++/* Inject architecture-specific include directories via the CPP spec. */
++#define OHOS_MULTIARCH_CPP_SPEC OHOS_MULTIARCH_INCLUDE_SPEC(OHOS_ARCH_LIB_DIR)
++#ifndef SUBTARGET_CPP_SPEC
++#define SUBTARGET_CPP_SPEC ""
++#endif
++#define OHOS_PREV_SUBTARGET_CPP_SPEC SUBTARGET_CPP_SPEC
++#undef SUBTARGET_CPP_SPEC
++#define SUBTARGET_CPP_SPEC OHOS_PREV_SUBTARGET_CPP_SPEC OHOS_MULTIARCH_CPP_SPEC
++#undef OHOS_PREV_SUBTARGET_CPP_SPEC
++#undef OHOS_MULTIARCH_CPP_SPEC
++#undef STANDARD_STARTFILE_PREFIX_1
++#define STANDARD_STARTFILE_PREFIX_1 "/usr/lib/"
++
++#undef STANDARD_STARTFILE_PREFIX_2
++#define STANDARD_STARTFILE_PREFIX_2 "/lib/"
++
++/* Library directories for OHOS - use flat structure without arch subdirs */
++#undef MD_EXEC_PREFIX
++#define MD_EXEC_PREFIX "/usr/lib/"
++
++#undef MD_STARTFILE_PREFIX
++#define MD_STARTFILE_PREFIX "/usr/lib/"
++
++#undef MD_STARTFILE_PREFIX_1
++#define MD_STARTFILE_PREFIX_1 "/lib/"
++
++/* Override STARTFILE and ENDFILE specs - OHOS uses flat /usr/lib/ structure */
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC \
++  "%{!shared: \
++     %{pg|p|profile:%R/usr/lib/crt1.o%s; \
++       pie:%R/usr/lib/Scrt1.o%s; \
++       :%R/usr/lib/crt1.o%s}} \
++   %R/usr/lib/crti.o%s \
++   %{static:crtbeginT.o%s;shared|pie:crtbeginS.o%s;:crtbegin.o%s}"
++
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC \
++  "%{shared|pie:crtendS.o%s;:crtend.o%s} \
++   %R/usr/lib/crtn.o%s"
++#ifdef LINK_SPEC
++#undef LINK_SPEC
++#endif
++/* Define the link spec for x86 OpenHarmony */
++#define LINK_SPEC						\
++  "%{" SPEC_32 ":-m elf_i386} "				\
++  "%{" SPEC_64 ":-m elf_x86_64} "				\
++  "%{shared:-shared} "						\
++  "%{!shared: "							\
++    "%{!static: "						\
++      "%{rdynamic:-export-dynamic} "				\
++      "%{" SPEC_32 ":-dynamic-linker " OHOS_DYNAMIC_LINKER "} "	\
++      "%{" SPEC_64 ":-dynamic-linker " OHOS_DYNAMIC_LINKER "}} "	\
++    "%{static:-static}} "					\
++  "-L%R/usr/lib " 						\
++  "-L%R/lib "
++
++/* Default to little endian and async unwind tables */
++#undef TARGET_DEFAULT_ASYNC_UNWIND_TABLES
++#define TARGET_DEFAULT_ASYNC_UNWIND_TABLES 1
++
++#endif /* GCC_I386_OHOS_H */
+diff --git a/gcc/config/i386/ohos64.h b/gcc/config/i386/ohos64.h
+new file mode 100644
+index 000000000..7ecbfd7a1
+--- /dev/null
++++ b/gcc/config/i386/ohos64.h
+@@ -0,0 +1,111 @@
++/* Definitions for x86_64 running OpenHarmony (OHOS).
++   Copyright (C) 2024 Free Software Foundation, Inc.
++
++   This file is part of GCC.
++
++   GCC is free software; you can redistribute it and/or modify it
++   under the terms of the GNU General Public License as published by
++   the Free Software Foundation; either version 3, or (at your option)
++   any later version.
++
++   GCC is distributed in the hope that it will be useful, but
++   WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   General Public License for more details.
++
++   You should have received a copy of the GNU General Public License
++   along with GCC; see the file COPYING3.  If not see
++   <http://www.gnu.org/licenses/>.  */
++
++#ifndef GCC_I386_OHOS_H
++#define GCC_I386_OHOS_H
++
++/* Define architecture-specific dynamic linker - match LLVM getDynamicLinker() */
++
++# define OHOS_ARCH_DYNAMIC_LINKER "/lib/ld-musl-x86_64.so.1"
++
 +
 +/* Include the generic OpenHarmony configuration */
 +/* Note: ohos.h is already included via tm.h, no need to include again */
@@ -646,15 +752,9 @@ index 000000000..244fb959c
 +  while (0)
 +
 +/* OpenHarmony library paths for x86 */
-+#if TARGET_X32
-+# define OHOS_ARCH_LIB_DIR "x86_64-linux-ohosx32"
-+#elif TARGET_64BIT
++
 +# define OHOS_ARCH_LIB_DIR "x86_64-linux-ohos"
-+#else
-+# define OHOS_ARCH_LIB_DIR "x86_64-linux-ohos"
-+#else
-+# define OHOS_ARCH_LIB_DIR "i386-linux-ohos"
-+#endif
++
 +
 +/* Inject architecture-specific include directories via the CPP spec. */
 +#define OHOS_MULTIARCH_CPP_SPEC OHOS_MULTIARCH_INCLUDE_SPEC(OHOS_ARCH_LIB_DIR)
@@ -672,30 +772,30 @@ index 000000000..244fb959c
 +#undef STANDARD_STARTFILE_PREFIX_2
 +#define STANDARD_STARTFILE_PREFIX_2 "/lib/"
 +
-+/* Add architecture-specific library directories for OHOS */
++/* Library directories for OHOS - use flat structure without arch subdirs */
 +#undef MD_EXEC_PREFIX
-+#define MD_EXEC_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_EXEC_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX
-+#define MD_STARTFILE_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX_1
-+#define MD_STARTFILE_PREFIX_1 "/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX_1 "/lib/"
 +
-+/* Override STARTFILE and ENDFILE specs to use architecture-specific paths */
++/* Override STARTFILE and ENDFILE specs - OHOS uses flat /usr/lib/ structure */
 +#undef STARTFILE_SPEC
 +#define STARTFILE_SPEC \
 +  "%{!shared: \
-+     %{pg|p|profile:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/gcrt1.o%s; \
-+       pie:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/Scrt1.o%s; \
-+       :%R/usr/lib/" OHOS_ARCH_LIB_DIR "/crt1.o%s}} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crti.o%s \
++     %{pg|p|profile:%R/usr/lib/crt1.o%s; \
++       pie:%R/usr/lib/Scrt1.o%s; \
++       :%R/usr/lib/crt1.o%s}} \
++   %R/usr/lib/crti.o%s \
 +   %{static:crtbeginT.o%s;shared|pie:crtbeginS.o%s;:crtbegin.o%s}"
 +
 +#undef ENDFILE_SPEC
 +#define ENDFILE_SPEC \
 +  "%{shared|pie:crtendS.o%s;:crtend.o%s} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crtn.o%s"
++   %R/usr/lib/crtn.o%s"
 +#ifdef LINK_SPEC
 +#undef LINK_SPEC
 +#endif
@@ -710,9 +810,7 @@ index 000000000..244fb959c
 +      "%{" SPEC_32 ":-dynamic-linker " OHOS_DYNAMIC_LINKER "} "	\
 +      "%{" SPEC_64 ":-dynamic-linker " OHOS_DYNAMIC_LINKER "}} "	\
 +    "%{static:-static}} "					\
-+  "-L%R/usr/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/usr/lib " 						\
-+  "-L%R/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/lib "
 +
 +/* Default to little endian and async unwind tables */
@@ -722,10 +820,10 @@ index 000000000..244fb959c
 +#endif /* GCC_I386_OHOS_H */
 diff --git a/gcc/config/mips/mips-ohos.h b/gcc/config/mips/mips-ohos.h
 new file mode 100644
-index 000000000..e7403e962
+index 000000000..f849a30b1
 --- /dev/null
 +++ b/gcc/config/mips/mips-ohos.h
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,134 @@
 +/* Definitions for MIPS running OpenHarmony (OHOS).
 +   Copyright (C) 2024 Free Software Foundation, Inc.
 +
@@ -816,30 +914,30 @@ index 000000000..e7403e962
 +#undef STANDARD_STARTFILE_PREFIX_2
 +#define STANDARD_STARTFILE_PREFIX_2 "/lib/"
 +
-+/* Add architecture-specific library directories for OHOS */
++/* Library directories for OHOS - use flat structure without arch subdirs */
 +#undef MD_EXEC_PREFIX
-+#define MD_EXEC_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_EXEC_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX
-+#define MD_STARTFILE_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX_1
-+#define MD_STARTFILE_PREFIX_1 "/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX_1 "/lib/"
 +
-+/* Override STARTFILE and ENDFILE specs to use architecture-specific paths */
++/* Override STARTFILE and ENDFILE specs - OHOS uses flat /usr/lib/ structure */
 +#undef STARTFILE_SPEC
 +#define STARTFILE_SPEC \
 +  "%{!shared: \
-+     %{pg|p|profile:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/gcrt1.o%s; \
-+       pie:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/Scrt1.o%s; \
-+       :%R/usr/lib/" OHOS_ARCH_LIB_DIR "/crt1.o%s}} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crti.o%s \
++     %{pg|p|profile:%R/usr/lib/crt1.o%s; \
++       pie:%R/usr/lib/Scrt1.o%s; \
++       :%R/usr/lib/crt1.o%s}} \
++   %R/usr/lib/crti.o%s \
 +   %{static:crtbeginT.o%s;shared|pie:crtbeginS.o%s;:crtbegin.o%s}"
 +
 +#undef ENDFILE_SPEC
 +#define ENDFILE_SPEC \
 +  "%{shared|pie:crtendS.o%s;:crtend.o%s} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crtn.o%s"
++   %R/usr/lib/crtn.o%s"
 +
 +/* Define the link spec for MIPS OpenHarmony */
 +#define LINK_SPEC						\
@@ -852,9 +950,7 @@ index 000000000..e7403e962
 +      "%{rdynamic:-export-dynamic} "				\
 +      "-dynamic-linker " OHOS_DYNAMIC_LINKER "} "		\
 +    "%{static:-static}} "					\
-+  "-L%R/usr/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/usr/lib " 						\
-+  "-L%R/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/lib "
 +
 +/* Default to little endian and async unwind tables */
@@ -864,10 +960,10 @@ index 000000000..e7403e962
 +#endif /* GCC_MIPS_OHOS_H */
 diff --git a/gcc/config/ohos-paths.h b/gcc/config/ohos-paths.h
 new file mode 100644
-index 000000000..a0a273dac
+index 000000000..aaaad84f1
 --- /dev/null
 +++ b/gcc/config/ohos-paths.h
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,72 @@
 +/* OpenHarmony sysroot and toolchain utilities
 +   Copyright (C) 2024 Free Software Foundation, Inc.
 +
@@ -893,29 +989,28 @@ index 000000000..a0a273dac
 +/* OpenHarmony standard filesystem layout support.
 +
 +   This header defines the standard paths for OpenHarmony SDK layout:
-+   - Headers: sysroot/usr/include/{arch}/
-+   - Libraries: sysroot/usr/lib/{arch}/
-+   - CRT files: sysroot/usr/lib/{arch}/crt*.o
++   - Headers: sysroot/usr/include/
++   - Libraries: sysroot/usr/lib/
++   - CRT files: sysroot/usr/lib/crt*.o
 +
++   Note: OHOS uses a flat /usr/lib/ structure without architecture subdirectories.
 +   The paths are designed to work with the official OpenHarmony SDK
 +   structure as distributed by the OpenHarmony project.
 +*/
 +
-+/* Architecture-specific include directory patterns */
-+#define OHOS_ARCH_INCLUDE_PATTERN "/usr/include/%s"
++/* Include directory patterns - OHOS uses flat structure */
 +#define OHOS_GENERIC_INCLUDE_PATH "/usr/include"
 +
-+/* Architecture-specific library directory patterns */
-+#define OHOS_ARCH_LIB_PATTERN "/usr/lib/%s"
++/* Library directory patterns - OHOS uses flat structure */
 +#define OHOS_GENERIC_LIB_PATH "/usr/lib"
 +#define OHOS_LIB_FALLBACK_PATH "/lib"
 +
-+/* CRT file location patterns */
-+#define OHOS_CRT_FILE_PATTERN "/usr/lib/%s/%s"
++/* CRT file location - direct in /usr/lib/ */
++#define OHOS_CRT_FILE_PATTERN "/usr/lib/%s"
 +
-+/* Helper fragment for feeding multi-arch include dirs into SUBTARGET_CPP_SPEC. */
++/* Helper fragment for include dirs - OHOS uses flat /usr/include/ */
 +#define OHOS_MULTIARCH_INCLUDE_SPEC(archdir) \
-+  " %{!nostdinc:%{!fself-test=*: -idirafter %R/usr/include/" archdir "}}"
++  " %{!nostdinc:%{!fself-test=*: -idirafter %R/usr/include}}"
 +
 +/* Standard OpenHarmony target triplets */
 +#define OHOS_AARCH64_TRIPLET "aarch64-linux-ohos"
@@ -924,31 +1019,26 @@ index 000000000..a0a273dac
 +
 +/* Helper macros for path construction */
 +#define OHOS_SYSROOT_PATH(path) "%R" path
-+#define OHOS_ARCH_PATH(base, arch) base "/" arch
-+#define OHOS_CRT_PATH(arch, file) "/usr/lib/" arch "/" file
 +
-+/* Standard search path lists for different file types */
++/* Standard search path lists - OHOS uses flat structure */
 +#define OHOS_STANDARD_INCLUDE_PATHS \
-+  { OHOS_SYSROOT_PATH(OHOS_ARCH_PATH("/usr/include", OHOS_TARGET_ARCH)), \
-+    OHOS_SYSROOT_PATH("/usr/include"), \
++  { OHOS_SYSROOT_PATH("/usr/include"), \
 +    NULL }
 +
 +#define OHOS_STANDARD_LIB_PATHS \
-+  { OHOS_SYSROOT_PATH(OHOS_ARCH_PATH("/usr/lib", OHOS_TARGET_ARCH)), \
-+    OHOS_SYSROOT_PATH("/usr/lib"), \
-+    OHOS_SYSROOT_PATH(OHOS_ARCH_PATH("/lib", OHOS_TARGET_ARCH)), \
++  { OHOS_SYSROOT_PATH("/usr/lib"), \
 +    OHOS_SYSROOT_PATH("/lib"), \
 +    NULL }
 +
-+/* CRT files standard locations */
-+#define OHOS_CRT1_PATH OHOS_CRT_PATH(OHOS_TARGET_ARCH, "crt1.o")
-+#define OHOS_CRTI_PATH OHOS_CRT_PATH(OHOS_TARGET_ARCH, "crti.o")
-+#define OHOS_CRTN_PATH OHOS_CRT_PATH(OHOS_TARGET_ARCH, "crtn.o")
++/* CRT files standard locations - direct in /usr/lib/ */
++#define OHOS_CRT1_PATH "/usr/lib/crt1.o"
++#define OHOS_CRTI_PATH "/usr/lib/crti.o"
++#define OHOS_CRTN_PATH "/usr/lib/crtn.o"
 +
 +#endif /* GCC_OHOS_PATHS_H */
 diff --git a/gcc/config/ohos.h b/gcc/config/ohos.h
 new file mode 100644
-index 000000000..e44fe51b1
+index 000000000..c84d2b5ff
 --- /dev/null
 +++ b/gcc/config/ohos.h
 @@ -0,0 +1,152 @@
@@ -1106,10 +1196,10 @@ index 000000000..e44fe51b1
 +  "This combination is fully supported and widely used in production."
 diff --git a/gcc/config/riscv/riscv-ohos.h b/gcc/config/riscv/riscv-ohos.h
 new file mode 100644
-index 000000000..9a78d0fee
+index 000000000..548adcf9b
 --- /dev/null
 +++ b/gcc/config/riscv/riscv-ohos.h
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,125 @@
 +/* Definitions for RISC-V running OpenHarmony (OHOS).
 +   Copyright (C) 2024 Free Software Foundation, Inc.
 +
@@ -1184,30 +1274,30 @@ index 000000000..9a78d0fee
 +#undef STANDARD_STARTFILE_PREFIX_2
 +#define STANDARD_STARTFILE_PREFIX_2 "/lib/"
 +
-+/* Add architecture-specific library directories for OHOS */
++/* Library directories for OHOS - use flat structure without arch subdirs */
 +#undef MD_EXEC_PREFIX
-+#define MD_EXEC_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_EXEC_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX
-+#define MD_STARTFILE_PREFIX "/usr/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX "/usr/lib/"
 +
 +#undef MD_STARTFILE_PREFIX_1
-+#define MD_STARTFILE_PREFIX_1 "/lib/" OHOS_ARCH_LIB_DIR "/"
++#define MD_STARTFILE_PREFIX_1 "/lib/"
 +
-+/* Override STARTFILE and ENDFILE specs to use architecture-specific paths */
++/* Override STARTFILE and ENDFILE specs - OHOS uses flat /usr/lib/ structure */
 +#undef STARTFILE_SPEC
 +#define STARTFILE_SPEC \
 +  "%{!shared: \
-+     %{pg|p|profile:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/gcrt1.o%s; \
-+       pie:%R/usr/lib/" OHOS_ARCH_LIB_DIR "/Scrt1.o%s; \
-+       :%R/usr/lib/" OHOS_ARCH_LIB_DIR "/crt1.o%s}} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crti.o%s \
++     %{pg|p|profile:%R/usr/lib/crt1.o%s; \
++       pie:%R/usr/lib/Scrt1.o%s; \
++       :%R/usr/lib/crt1.o%s}} \
++   %R/usr/lib/crti.o%s \
 +   %{static:crtbeginT.o%s;shared|pie:crtbeginS.o%s;:crtbegin.o%s}"
 +
 +#undef ENDFILE_SPEC
 +#define ENDFILE_SPEC \
 +  "%{shared|pie:crtendS.o%s;:crtend.o%s} \
-+   %R/usr/lib/" OHOS_ARCH_LIB_DIR "/crtn.o%s"
++   %R/usr/lib/crtn.o%s"
 +#ifdef LINK_SPEC
 +#undef LINK_SPEC
 +#endif
@@ -1222,9 +1312,7 @@ index 000000000..9a78d0fee
 +      "%{rdynamic:-export-dynamic} "				\
 +      "-dynamic-linker " OHOS_DYNAMIC_LINKER "} "		\
 +    "%{static:-static}} "					\
-+  "-L%R/usr/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/usr/lib " 						\
-+  "-L%R/lib/" OHOS_ARCH_LIB_DIR " "				\
 +  "-L%R/lib "
 +
 +/* RISC-V OpenHarmony uses relaxation by default */
@@ -1279,13 +1367,170 @@ index cfc9ddaa3..8d2d6d73d 100644
  # include <stddef.h>
  #endif
 diff --git a/libgcc/config.host b/libgcc/config.host
-index 6a88ee5a2..ec8f6954d 100644
+index 6a88ee5a2..82dc6f9be 100644
 --- a/libgcc/config.host
 +++ b/libgcc/config.host
-@@ -435,6 +435,15 @@ aarch64*-*-fuchsia*)
+@@ -310,6 +310,11 @@ case ${host} in
+   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-fuchsia"
+   extra_parts="crtbegin.o crtend.o"
+   ;;
++*-*-linux-ohos*)
++  tmake_file="$tmake_file t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-linux"
++  tmake_file="$tmake_file t-ohos-crtstuff"
++  extra_parts="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
++  ;;
+ *-*-linux* | frv-*-*linux* | *-*-kfreebsd*-gnu | *-*-gnu* | *-*-kopensolaris*-gnu | *-*-uclinuxfdpiceabi)
+   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-linux"
+   extra_parts="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
+@@ -435,6 +440,160 @@ aarch64*-*-fuchsia*)
  	tmake_file="${tmake_file} ${cpu_type}/t-softfp t-softfp"
  	tmake_file="${tmake_file} t-dfprules"
  	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	tmake_file="${tmake_file} t-ohos-crtstuff"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
++aarch64*-*-linux-ohos*)
++	extra_parts="$extra_parts crtfastmath.o"
++	md_unwind_def_header=aarch64/aarch64-unwind-def.h
++	md_unwind_header=aarch64/linux-unwind.h
++	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
++	tmake_file="${tmake_file} ${cpu_type}/t-lse t-slibgcc-libgcc"
++	tmake_file="${tmake_file} t-softfp ${cpu_type}/t-softfp"
++	tmake_file="${tmake_file} t-dfprules"
++	;;
 +aarch64*-*-linux-ohos*)
 +	extra_parts="$extra_parts crtfastmath.o"
 +	md_unwind_def_header=aarch64/aarch64-unwind-def.h
@@ -1298,6 +1543,40 @@ index 6a88ee5a2..ec8f6954d 100644
  aarch64*-*-linux*)
  	extra_parts="$extra_parts crtfastmath.o"
  	md_unwind_def_header=aarch64/aarch64-unwind-def.h
+@@ -811,6 +970,14 @@ i[34567]86-*-gnu*)
+ 	tm_file="${tm_file} i386/elf-lib.h"
+ 	md_unwind_header=i386/gnu-unwind.h
+ 	;;
++x86_64-*-linux-ohos*)
++	extra_parts="$extra_parts crtprec32.o crtprec64.o crtprec80.o crtfastmath.o"
++	tmake_file="${tmake_file} i386/t-crtpc t-crtfm i386/t-crtstuff t-dfprules"
++	tmake_file="${tmake_file} t-ohos-crtstuff"
++	tm_file="${tm_file} i386/elf-lib.h"
++	md_unwind_header=i386/linux-unwind.h
++	tmake_file="${tmake_file} i386/t-heap-trampoline"
++	;;
+ x86_64-*-linux*)
+ 	extra_parts="$extra_parts crtprec32.o crtprec64.o crtprec80.o crtfastmath.o"
+ 	tmake_file="${tmake_file} i386/t-crtpc t-crtfm i386/t-crtstuff t-dfprules"
+@@ -1612,7 +1779,7 @@ i[34567]86-*-* | x86_64-*-*)
+ esac
+ 
+ case ${host} in
+-i[34567]86-*-linux* | x86_64-*-linux*)
++i[34567]86-*-linux* | x86_64-*-linux* | x86_64-*-linux-ohos*)
+ 	# Provide backward binary compatibility for 64bit Linux/x86.
+ 	if test "${host_address}" = 64; then
+ 		tmake_file="${tmake_file} i386/${host_address}/t-softfp-compat"
+diff --git a/libgcc/config/t-ohos-crtstuff b/libgcc/config/t-ohos-crtstuff
+new file mode 100644
+index 000000000..8baa33873
+--- /dev/null
++++ b/libgcc/config/t-ohos-crtstuff
+@@ -0,0 +1,4 @@
++# OHOS uses PIE by default, so all crt* files need to be compiled with PIC
++# to avoid R_X86_64_32 relocation issues against hidden symbols like __TMC_END__
++CRTSTUFF_T_CFLAGS = $(PICFLAG)
++CRTSTUFF_T_CFLAGS_S = $(CRTSTUFF_T_CFLAGS) $(PICFLAG)
 diff --git a/libgcc/gthr-posix.h b/libgcc/gthr-posix.h
 index eeb84f32d..1b5cd8bc5 100644
 --- a/libgcc/gthr-posix.h
