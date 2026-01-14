@@ -1,0 +1,11 @@
+--- usr/include/string.h.orig	2026-01-14 12:00:00.000000000 +0800
++++ usr/include/string.h	2026-01-14 12:00:00.000000000 +0800
+@@ -96,7 +96,7 @@
+ void *memrchr(const void *, int, size_t);
+ void *mempcpy(void *, const void *, size_t);
+ #ifndef __cplusplus
+-char *basename();
++char *basename(const char *);
+ #endif
+ #endif
+ 

@@ -1,28 +1,37 @@
---- ndk/ohos/sysroot/usr/include/fortify/fortify.h	2025-12-11 04:42:51.089800165 +0800
-+++ ndk/ohos/sysroot/usr/include/fortify/fortify.h.new	2025-12-11 04:43:42.490450176 +0800
-@@ -16,15 +16,21 @@
- #ifndef	_FORTIFY_FORTIFY_H
- #define	_FORTIFY_FORTIFY_H
+--- usr/include/fortify/fortify.h.orig	2026-01-14 12:00:00.000000000 +0800
++++ usr/include/fortify/fortify.h	2026-01-14 12:00:00.000000000 +0800
+@@ -13,7 +13,11 @@
+  * limitations under the License.
+  */
  
+-#ifndef	_FORTIFY_FORTIFY_H
 +#ifndef __has_attribute
 +#define __has_attribute(x) 0
 +#endif
 +
++#ifndef	_FORTIFY_FORTIFY_H
+ #define	_FORTIFY_FORTIFY_H
+ 
  #ifdef __cplusplus
+@@ -20,12 +24,17 @@
  extern "C" {
  #endif
  
- #if (_FORTIFY_SOURCE == 1) || (_FORTIFY_SOURCE == 2)
++/* Only enable fortify on compilers that support the required attributes.
++ * GCC does not support overloadable, diagnose_if, or pass_object_size. */
 +#if defined(__clang__) || (__has_attribute(overloadable) && __has_attribute(diagnose_if) && __has_attribute(pass_object_size))
++
+ #ifdef _FORTIFY_SOURCE
+ #if (_FORTIFY_SOURCE == 1) || (_FORTIFY_SOURCE == 2)
  #ifndef __FORTIFY_COMPILATION
  #define __FORTIFY_COMPILATION
  #endif
  #endif
 +#endif
+ #endif
  
- #if (_FORTIFY_SOURCE == 2)
- #ifndef __FORTIFY_RUNTIME
-@@ -60,16 +66,29 @@
+ #ifdef _FORTIFY_SOURCE
+@@ -64,16 +73,29 @@
  #define __DIAGNOSE_ALWAYS_INLINE __attribute__((__always_inline__))
  #define	__DIAGNOSE_PREDICT_TRUE(exp)	__builtin_expect((exp) != 0, 1)
  #define	__DIAGNOSE_PREDICT_FALSE(exp)	__builtin_expect((exp) != 0, 0)
@@ -52,7 +61,7 @@
  #define __DIAGNOSE__SIZE_MUL_OVERFLOW(a, b, result) __builtin_umull_overflow(a, b, result)
  #define __DIAGNOSE_PRINTFLIKE(x, y) __attribute__((__format__(printf, x, y)))
  #define __DIAGNOSE_CALL_BYPASSING_FORTIFY(fn) (&(fn))
-@@ -100,7 +119,11 @@
+@@ -104,7 +126,11 @@
  #define __DIAGNOSE_BOS_TRIVIALLY_GE(bos_val, index) __DIAGNOSE_BOS_DYNAMIC_CHECK_IMPL((bos_val), >=, (index))
  #define __DIAGNOSE_BOS_TRIVIALLY_GT(bos_val, index) __DIAGNOSE_BOS_DYNAMIC_CHECK_IMPL((bos_val), >, (index))
  

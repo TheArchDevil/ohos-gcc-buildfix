@@ -35,6 +35,11 @@ BINUTILS_SOURCE_DIR="${SCRIPT_DIR}/binutils-${BINUTILS_VERSION}"
 BINUTILS_BUILD_DIR="${SCRIPT_DIR}/build-binutils"
 BINUTILS_INSTALL_PREFIX="${BINUTILS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
 
+# NDK configuration
+NDK_URL="${NDK_URL:-https://cidownload.openharmony.cn/version/Daily_Version/LLVM-19/20260114_061434/version-Daily_Version-LLVM-19-20260114_061434-LLVM-19.tar.gz}"
+NDK_DIR="${SCRIPT_DIR}/ndk"
+NDK_SYSROOT_DIR="${NDK_DIR}/sysroot"
+
 # Target configuration
 DEFAULT_CBUILD="$(gcc -dumpmachine)"
 CBUILD="${CBUILD:-${DEFAULT_CBUILD}}"
@@ -169,6 +174,61 @@ error() {
 # Build Steps
 # ============================================================================
 
+prepare_ndk() {
+    msg "Preparing NDK sysroot..."
+
+    local ndk_tarball="${SCRIPT_DIR}/ndk-llvm.tar.gz"
+    local ndk_extract_tmp="${NDK_DIR}/tmp-extract"
+
+    # Check if sysroot already exists for current target
+    if [ -d "${NDK_SYSROOT_DIR}/${CTARGET}" ]; then
+        msg "NDK sysroot for ${CTARGET} already exists at ${NDK_SYSROOT_DIR}/${CTARGET}"
+        return 0
+    fi
+
+    mkdir -p "${NDK_DIR}"
+
+    # Download NDK if not present
+    if [ ! -f "${ndk_tarball}" ]; then
+        msg "Downloading NDK from ${NDK_URL}..."
+        wget -O "${ndk_tarball}" "${NDK_URL}" || \
+            error "Failed to download NDK"
+    fi
+
+    # Extract ohos-sysroot.tar.gz from NDK package
+    msg "Extracting ohos-sysroot.tar.gz from NDK package..."
+    local sysroot_tarball="${NDK_DIR}/ohos-sysroot.tar.gz"
+    tar -xzf "${ndk_tarball}" -C "${NDK_DIR}" 'ohos-sysroot.tar.gz' || \
+        error "Failed to extract ohos-sysroot.tar.gz from NDK package"
+
+    if [ ! -f "${sysroot_tarball}" ]; then
+        error "ohos-sysroot.tar.gz not found after extraction"
+    fi
+
+    # Extract sysroot to temp directory first (it contains sysroot/ subdirectory)
+    msg "Extracting sysroot..."
+    mkdir -p "${ndk_extract_tmp}"
+    tar -xzf "${sysroot_tarball}" -C "${ndk_extract_tmp}" || \
+        error "Failed to extract sysroot"
+
+    # Move contents from sysroot/ subdirectory to NDK_SYSROOT_DIR
+    # ohos-sysroot.tar.gz structure: sysroot/{aarch64-linux-ohos,arm-linux-ohos,...}
+    msg "Moving sysroot to ${NDK_SYSROOT_DIR}..."
+    mkdir -p "${NDK_SYSROOT_DIR}"
+    if [ -d "${ndk_extract_tmp}/sysroot" ]; then
+        mv "${ndk_extract_tmp}/sysroot"/* "${NDK_SYSROOT_DIR}/" || \
+            error "Failed to move sysroot contents"
+    else
+        error "sysroot directory not found in ohos-sysroot.tar.gz"
+    fi
+
+    # Clean up
+    rm -rf "${ndk_extract_tmp}"
+    rm -f "${sysroot_tarball}"
+
+    msg "NDK sysroot prepared at ${NDK_SYSROOT_DIR}"
+}
+
 prepare_binutils() {
     msg "Preparing binutils ${BINUTILS_VERSION} source directory..."
 
@@ -241,7 +301,7 @@ apply_sysroot_patches() {
         for patch in "${SCRIPT_DIR}"/sysroot-patches/*.patch; do
             [ -f "${patch}" ] || continue
             msg "Applying $(basename "${patch}")..."
-            patch -d "${SCRIPT_DIR}" -p0 -N -i "${patch}" || msg "Patch $(basename "${patch}") already applied or failed"
+            patch -d "${SYSROOT}" -p0 -N -i "${patch}" || msg "Patch $(basename "${patch}") already applied or failed"
         done
     fi
 }
@@ -482,12 +542,12 @@ GCC Build Script for OpenHarmony (OHOS) Target
 Usage: $0 [OPTIONS] [COMMAND]
 
 Commands:
-    prepare       Download sources and apply patches for binutils and GCC
+    prepare       Download NDK/sources and apply patches for binutils and GCC
     binutils      Build and install binutils only
     configure     Ensure binutils exist and configure GCC
     build         Build GCC
     install       Install GCC
-    all           Run full pipeline (binutils + GCC)
+    all           Run full pipeline (NDK + binutils + GCC)
     clean         Clean build directories
 
 Options:
@@ -496,6 +556,7 @@ Options:
     --build=BUILD             Set build triplet (default: auto-detected)
   --prefix=PREFIX           Set installation prefix (default: ./install)
   --sysroot=SYSROOT         Set sysroot path for cross-compilation
+                            (default: ndk/sysroot/CTARGET)
   --jobs=N                  Number of parallel jobs (default: $(nproc))
   --enable-languages=LIST   Comma-separated language list (default: c,c++)
   --help                    Show this help message
@@ -507,7 +568,8 @@ Environment Variables:
   INSTALL_PREFIX            Installation prefix
     BINUTILS_VERSION          Binutils version (default: ${BINUTILS_VERSION})
     BINUTILS_INSTALL_PREFIX   Binutils installation prefix (default: same as INSTALL_PREFIX)
-  SYSROOT                   Sysroot path
+  SYSROOT                   Sysroot path (default: ndk/sysroot/CTARGET)
+  NDK_URL                   NDK download URL
   JOBS                      Number of parallel jobs
     CROSS_COMPILE             Cross prefix override (default: target- when cross compiling)
   LANG_*                    Enable/disable specific languages (yes/no)
@@ -594,9 +656,16 @@ if [ "${CHOST}" = "${CTARGET}" ]; then
     IS_NATIVE_BUILD=1
 fi
 
+# Set default SYSROOT to NDK sysroot if not specified
+if [ -z "${SYSROOT}" ]; then
+    SYSROOT="${NDK_SYSROOT_DIR}/${CTARGET}"
+    msg "Using default sysroot: ${SYSROOT}"
+fi
+
 # Execute command
 case "${COMMAND}" in
     prepare)
+        prepare_ndk
         prepare_binutils
         apply_sysroot_patches
         prepare_gcc
@@ -620,6 +689,7 @@ case "${COMMAND}" in
         clean
         ;;
     all)
+        prepare_ndk
         build_binutils
         configure_gcc
         build_gcc
