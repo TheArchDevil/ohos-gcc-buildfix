@@ -542,6 +542,7 @@ GCC Build Script for OpenHarmony (OHOS) Target
 Usage: $0 [OPTIONS] [COMMAND]
 
 Commands:
+    prepare_ndk   Download and setup NDK sysroot only
     prepare       Download NDK/sources and apply patches for binutils and GCC
     binutils      Build and install binutils only
     configure     Ensure binutils exist and configure GCC
@@ -616,7 +617,7 @@ while [ $# -gt 0 ]; do
         --enable-languages=*)
             LANGUAGES="${1#*=}"
             ;;
-        prepare|binutils|configure|build|install|all|clean|prepare_binutils)
+        prepare_ndk|prepare|binutils|configure|build|install|all|clean|prepare_binutils)
             COMMAND="$1"
             ;;
         *)
@@ -664,6 +665,10 @@ fi
 
 # Execute command
 case "${COMMAND}" in
+    prepare_ndk)
+        prepare_ndk
+        apply_sysroot_patches
+        ;;
     prepare)
         prepare_ndk
         prepare_binutils

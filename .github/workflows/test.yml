@@ -47,10 +47,20 @@ jobs:
             exit 0
           fi
 
+      - name: Download and setup sysroot
+        run: |
+          # Use build.sh to prepare NDK sysroot only (skip binutils and GCC source)
+          ./build.sh --target=${{ matrix.target }} prepare_ndk
+          
+          echo "Sysroot contents:"
+          ls -la ndk/sysroot/${{ matrix.target }}/ || echo "Sysroot empty"
+          ls -la ndk/sysroot/${{ matrix.target }}/usr/include/ 2>/dev/null | head -10 || echo "No includes found"
+
       - name: Setup test environment
         run: |
           export PATH="${PWD}/toolchain/bin:${PATH}"
           echo "PATH=${PWD}/toolchain/bin:${PATH}" >> $GITHUB_ENV
+          echo "SYSROOT=${PWD}/ndk/sysroot/${{ matrix.target }}" >> $GITHUB_ENV
           
           # Verify toolchain is available
           which ${{ matrix.target }}-gcc || exit 1
@@ -66,7 +76,7 @@ jobs:
           }
           EOF
           
-          ${{ matrix.target }}-gcc -c test_hello.c -o test_hello.o
+          ${{ matrix.target }}-gcc --sysroot="${SYSROOT}" -c test_hello.c -o test_hello.o
           file test_hello.o
 
       - name: Test C++ compilation
@@ -86,7 +96,7 @@ jobs:
           }
           EOF
           
-          ${{ matrix.target }}-g++ -c test_cpp.cpp -o test_cpp.o
+          ${{ matrix.target }}-g++ --sysroot="${SYSROOT}" -c test_cpp.cpp -o test_cpp.o
           file test_cpp.o
 
       - name: Test optimization levels
@@ -104,7 +114,7 @@ jobs:
           
           for opt in 0 1 2 3 s; do
             echo "Testing -O${opt}..."
-            ${{ matrix.target }}-gcc -O${opt} -c test_opt.c -o test_opt_O${opt}.o
+            ${{ matrix.target }}-gcc --sysroot="${SYSROOT}" -O${opt} -c test_opt.c -o test_opt_O${opt}.o
           done
 
       - name: Test with debug info
@@ -116,7 +126,7 @@ jobs:
           }
           EOF
           
-          ${{ matrix.target }}-gcc -g -c test_debug.c -o test_debug.o
+          ${{ matrix.target }}-gcc --sysroot="${SYSROOT}" -g -c test_debug.c -o test_debug.o
           file test_debug.o
 
       - name: Test position-independent code
@@ -129,7 +139,7 @@ jobs:
           }
           EOF
           
-          ${{ matrix.target }}-gcc -fPIC -c test_pic.c -o test_pic.o
+          ${{ matrix.target }}-gcc --sysroot="${SYSROOT}" -fPIC -c test_pic.c -o test_pic.o
           file test_pic.o
 
       - name: Summary
