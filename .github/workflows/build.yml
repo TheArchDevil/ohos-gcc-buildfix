@@ -31,6 +31,8 @@ env:
   NDK_URL: 'https://cidownload.openharmony.cn/version/Daily_Version/LLVM-19/20260114_061434/version-Daily_Version-LLVM-19-20260114_061434-LLVM-19.tar.gz'
   GCC_VERSION: '15.2.0'
   BINUTILS_VERSION: '2.43'
+  # Enable verbose output for debugging
+  DEBUG_BUILD: ${{ github.event.inputs.debug == 'true' && '1' || '' }}
 
 jobs:
   # Stage 1: Build cross-compiler (runs on Linux, compiles for OHOS)
@@ -95,6 +97,31 @@ jobs:
             autoconf automake libtool \
             pkg-config
 
+      - name: Display build environment info
+        run: |
+          echo "=== Build Environment ==="
+          echo "--- System info ---"
+          uname -a
+          cat /etc/os-release
+          
+          echo "--- Compiler versions ---"
+          gcc --version | head -1
+          g++ --version | head -1
+          
+          echo "--- Available compilers ---"
+          which gcc g++ x86_64-linux-gnu-gcc x86_64-linux-gnu-g++ 2>/dev/null || true
+          ls -la /usr/bin/*gcc* /usr/bin/*g++* 2>/dev/null || true
+          
+          echo "--- Memory info ---"
+          free -h
+          
+          echo "--- CPU info ---"
+          nproc
+          lscpu | grep -E 'Model name|CPU\(s\)|Thread'
+          
+          echo "--- Disk space ---"
+          df -h
+
       - name: Cache NDK sysroot
         id: cache-ndk
         uses: actions/cache@v4
@@ -117,24 +144,86 @@ jobs:
       - name: Prepare sources (download NDK, apply patches)
         run: |
           chmod +x build.sh
+          echo "=== Preparing sources ==="
           ./build.sh --target=${{ matrix.target }} prepare
+          
+          echo "=== Verifying source preparation ==="
+          echo "--- GCC source ---"
+          if [ -d "gcc-${{ env.GCC_VERSION }}" ]; then
+            echo "  ✓ GCC ${{ env.GCC_VERSION }} source directory exists"
+            ls gcc-${{ env.GCC_VERSION }}/*.c 2>/dev/null | head -3 || true
+          else
+            echo "  ✗ GCC source directory not found!"
+            ls -la
+            exit 1
+          fi
+          
+          echo "--- Binutils source ---"
+          if [ -d "binutils-${{ env.BINUTILS_VERSION }}" ]; then
+            echo "  ✓ Binutils ${{ env.BINUTILS_VERSION }} source directory exists"
+          else
+            echo "  ✗ Binutils source directory not found!"
+            exit 1
+          fi
+          
+          echo "--- Sysroot ---"
+          if [ -d "ndk/sysroot" ]; then
+            echo "  ✓ NDK sysroot exists"
+            echo "  Files: $(find ndk/sysroot -type f | wc -l)"
+          else
+            echo "  ✗ NDK sysroot not found!"
+            exit 1
+          fi
+          
+          echo "--- Disk space after prepare ---"
+          df -h .
 
       - name: Build binutils
         if: steps.cache-binutils.outputs.cache-hit != 'true'
         run: |
-          ./build.sh --target=${{ matrix.target }} binutils
+          echo "=== Building Binutils ==="
+          ./build.sh --target=${{ matrix.target }} binutils 2>&1 | tee build-binutils.log || {
+            echo "=== BINUTILS BUILD FAILED ==="
+            tail -100 build-binutils.log
+            exit 1
+          }
 
       - name: Configure GCC
         run: |
-          ./build.sh --target=${{ matrix.target }} configure
+          echo "=== Configuring GCC ==="
+          ./build.sh --target=${{ matrix.target }} configure 2>&1 | tee configure-gcc.log || {
+            echo "=== GCC CONFIGURE FAILED ==="
+            tail -100 configure-gcc.log
+            echo "=== Checking for specific errors ==="
+            grep -i "error\|cannot\|not found" configure-gcc.log | tail -30 || true
+            exit 1
+          }
 
       - name: Build GCC
         run: |
-          ./build.sh --target=${{ matrix.target }} --jobs=$(nproc) build
+          echo "=== Building GCC ==="
+          echo "Using $(nproc) parallel jobs"
+          ./build.sh --target=${{ matrix.target }} --jobs=$(nproc) build 2>&1 | tee build-gcc.log || {
+            echo "=== GCC BUILD FAILED ==="
+            echo "--- Last 200 lines ---"
+            tail -200 build-gcc.log
+            echo "--- Error summary ---"
+            grep -n -i "error\[:\]\|fatal\|failed" build-gcc.log | tail -30 || true
+            exit 1
+          }
 
       - name: Install GCC
         run: |
-          ./build.sh --target=${{ matrix.target }} install
+          echo "=== Installing GCC ==="
+          ./build.sh --target=${{ matrix.target }} install 2>&1 | tee install-gcc.log || {
+            echo "=== GCC INSTALL FAILED ==="
+            tail -100 install-gcc.log
+            exit 1
+          }
+          
+          echo "--- Installation summary ---"
+          echo "Installed files: $(find install -type f | wc -l)"
+          echo "Total size: $(du -sh install | cut -f1)"
 
       - name: Verify toolchain
         id: verify
@@ -197,6 +286,17 @@ jobs:
           name: stage1-${{ matrix.target }}
           path: install/
           retention-days: 1
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-stage1-${{ matrix.target }}
+          path: |
+            *.log
+            build-ohos/config.log
+            build-binutils/config.log
+          retention-days: 7
 
   # Stage 2: Build native OHOS compiler (Canadian Cross)
   build-native:
@@ -261,24 +361,112 @@ jobs:
             autoconf automake libtool \
             pkg-config
 
+      - name: Display Stage 2 build environment info
+        run: |
+          echo "=== Stage 2 Build Environment ==="
+          echo "--- System info ---"
+          uname -a
+          
+          echo "--- Compiler versions ---"
+          gcc --version | head -1
+          g++ --version | head -1
+          
+          echo "--- Available build compilers ---"
+          echo "Checking x86_64-linux-gnu-gcc:"
+          which x86_64-linux-gnu-gcc 2>/dev/null && x86_64-linux-gnu-gcc --version | head -1 || echo "  Not found"
+          echo "Checking gcc:"
+          which gcc && gcc --version | head -1
+          
+          echo "--- All available compilers ---"
+          ls -la /usr/bin/*gcc* 2>/dev/null || true
+          
+          echo "--- Memory & Disk ---"
+          free -h
+          df -h
+
       - name: Download stage 1 cross-compiler
         uses: actions/download-artifact@v4
         with:
           name: stage1-${{ matrix.target }}
           path: install/
 
+      - name: Verify stage 1 artifact extraction
+        run: |
+          echo "=== Verifying Stage 1 Artifact ==="
+          
+          echo "--- Directory structure ---"
+          ls -la install/
+          ls -la install/bin/ | head -20
+          
+          echo "--- File count ---"
+          echo "Total files: $(find install -type f | wc -l)"
+          echo "Binaries: $(find install/bin -type f | wc -l)"
+          
+          echo "--- Critical files check ---"
+          critical_files=(
+            "install/bin/${{ matrix.target }}-gcc"
+            "install/bin/${{ matrix.target }}-g++"
+            "install/bin/${{ matrix.target }}-ld"
+            "install/bin/${{ matrix.target }}-as"
+            "install/bin/${{ matrix.target }}-ar"
+          )
+          
+          all_found=true
+          for f in "${critical_files[@]}"; do
+            if [ -f "$f" ]; then
+              echo "  ✓ Found: $f ($(stat -c%s "$f") bytes)"
+            else
+              echo "  ✗ MISSING: $f"
+              all_found=false
+            fi
+          done
+          
+          if [ "$all_found" != "true" ]; then
+            echo "ERROR: Critical files missing from stage 1 artifact!"
+            exit 1
+          fi
+          
+          echo "--- libexec check ---"
+          ls -la install/libexec/gcc/${{ matrix.target }}/ 2>/dev/null || echo "libexec directory structure may differ"
+
       - name: Make stage 1 tools executable
         run: |
+          echo "=== Making Stage 1 Tools Executable ==="
           chmod +x install/bin/*
           chmod +x install/libexec/gcc/${{ matrix.target }}/*/* || true
+          
+          # Verify permissions
+          echo "--- Verifying executable permissions ---"
+          ls -la install/bin/${{ matrix.target }}-gcc
+          
           # Add stage 1 to PATH and verify
           export PATH="${PWD}/install/bin:${PATH}"
-          echo "Stage 1 GCC version:"
+          
+          echo "--- Stage 1 GCC verification ---"
+          echo "GCC location: $(which ${{ matrix.target }}-gcc)"
           ${{ matrix.target }}-gcc --version
+          
+          echo "--- Testing stage 1 compiler ---"
+          echo 'int main() { return 0; }' > /tmp/test.c
+          ${{ matrix.target }}-gcc -c /tmp/test.c -o /tmp/test.o && echo "  ✓ Stage 1 compiler works" || echo "  ✗ Stage 1 compiler failed"
+          file /tmp/test.o
 
       - name: Build Canadian Cross (Stage 2)
         run: |
           echo "=== Building native OHOS compiler (Canadian Cross) ==="
+          echo "Build configuration:"
+          echo "  CBUILD: x86_64-linux-gnu"
+          echo "  CHOST: ${{ matrix.target }}"
+          echo "  CTARGET: ${{ matrix.target }}"
+          echo "  Stage 1: ./install"
+          echo "  Prefix: ./install-stage2"
+          echo "  Jobs: $(nproc)"
+          echo ""
+          
+          # Ensure clean build directory
+          rm -rf build-ohos build-binutils
+          
+          # Run build with verbose output on failure
           ./build.sh \
             --build=x86_64-linux-gnu \
             --host=${{ matrix.target }} \
@@ -286,24 +474,64 @@ jobs:
             --stage1=./install \
             --prefix=./install-stage2 \
             --jobs=$(nproc) \
-            all
+            all 2>&1 | tee build-stage2.log || {
+              echo "=== BUILD FAILED - Last 200 lines of log ==="
+              tail -200 build-stage2.log
+              echo "=== Checking for configure errors ==="
+              grep -n -i "error\|failed\|cannot\|not found" build-stage2.log | tail -50 || true
+              echo "=== Checking CC_FOR_BUILD usage ==="
+              grep -n "CC_FOR_BUILD\|checking build system compiler" build-stage2.log | tail -20 || true
+              exit 1
+            }
 
       - name: Verify native compiler binaries
         run: |
           echo "=== Verifying native OHOS compiler ==="
+          
+          # Check that install directory exists and has content
+          if [ ! -d "./install-stage2/bin" ]; then
+            echo "ERROR: install-stage2/bin directory not found!"
+            echo "Directory listing:"
+            ls -la ./install-stage2/ 2>/dev/null || echo "install-stage2 does not exist"
+            exit 1
+          fi
+          
+          # Check critical binaries exist
+          echo "--- Critical binary check ---"
+          critical_bins=("gcc" "g++" "cpp")
+          for bin in "${critical_bins[@]}"; do
+            if [ -f "./install-stage2/bin/$bin" ]; then
+              echo "  ✓ $bin: $(stat -c%s ./install-stage2/bin/$bin) bytes"
+            else
+              echo "  ✗ MISSING: $bin"
+            fi
+          done
           
           # Check that binaries are OHOS format
           echo "--- Binary format check ---"
           file ./install-stage2/bin/gcc
           file ./install-stage2/bin/g++
           
+          # Verify it's an ELF for the right architecture
+          echo "--- Architecture verification ---"
+          readelf -h ./install-stage2/bin/gcc | grep -E 'Class|Machine|OS/ABI' || true
+          
           # Verify interpreter is musl
           echo "--- Interpreter check ---"
           readelf -p .interp ./install-stage2/bin/gcc || true
           
+          # Check dynamic dependencies
+          echo "--- Dynamic dependencies ---"
+          readelf -d ./install-stage2/bin/gcc | grep NEEDED || true
+          
           # List installed files
           echo "--- Installed binaries ---"
           ls -la ./install-stage2/bin/
+          
+          # Count total installed files
+          echo "--- Installation statistics ---"
+          echo "Total files: $(find ./install-stage2 -type f | wc -l)"
+          echo "Total size: $(du -sh ./install-stage2 | cut -f1)"
           
           echo "=== Verification completed ==="
 
@@ -336,6 +564,19 @@ jobs:
           name: gcc-native-${{ matrix.target }}
           path: artifacts/
           retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-stage2-${{ matrix.target }}
+          path: |
+            *.log
+            build-ohos/config.log
+            build-ohos/gcc/config.log
+            build-ohos/gmp/config.log
+            build-binutils/config.log
+          retention-days: 7
 
   # Quick syntax and patch validation (runs faster than full build)
   validate:
