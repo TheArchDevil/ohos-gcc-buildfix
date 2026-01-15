@@ -314,17 +314,19 @@ setup_canadian_cross_env() {
     # Add stage 1 toolchain to PATH first, so tools can be found by name
     export PATH="${STAGE1_PREFIX}/bin:${PATH}"
 
-    # Use stage 1 cross-compiler as the host compiler (found via PATH)
-    export CC="${CTARGET}-gcc"
-    export CXX="${CTARGET}-g++"
-    export AR="${CTARGET}-ar"
-    export AS="${CTARGET}-as"
-    export LD="${CTARGET}-ld"
-    export NM="${CTARGET}-nm"
-    export RANLIB="${CTARGET}-ranlib"
-    export STRIP="${CTARGET}-strip"
-    export OBJCOPY="${CTARGET}-objcopy"
-    export OBJDUMP="${CTARGET}-objdump"
+    # Use stage 1 cross-compiler as the host compiler
+    # IMPORTANT: Use full paths to avoid picking up wrong binaries from install prefix
+    # when install-stage2/bin already contains old OHOS native binaries
+    export CC="${STAGE1_PREFIX}/bin/${CTARGET}-gcc"
+    export CXX="${STAGE1_PREFIX}/bin/${CTARGET}-g++"
+    export AR="${STAGE1_PREFIX}/bin/${CTARGET}-ar"
+    export AS="${STAGE1_PREFIX}/bin/${CTARGET}-as"
+    export LD="${STAGE1_PREFIX}/bin/${CTARGET}-ld"
+    export NM="${STAGE1_PREFIX}/bin/${CTARGET}-nm"
+    export RANLIB="${STAGE1_PREFIX}/bin/${CTARGET}-ranlib"
+    export STRIP="${STAGE1_PREFIX}/bin/${CTARGET}-strip"
+    export OBJCOPY="${STAGE1_PREFIX}/bin/${CTARGET}-objcopy"
+    export OBJDUMP="${STAGE1_PREFIX}/bin/${CTARGET}-objdump"
 
     # Note: Do NOT set PIE flags here manually. GCC's configure will detect PIE requirements
     # and set PICFLAG/LD_PICFLAG appropriately. For Canadian Cross to OHOS, we use
@@ -336,18 +338,19 @@ setup_canadian_cross_env() {
     # For Canadian Cross build, target tools must be the stage 1 cross-compiler
     # because it can run on the BUILD machine and generate code for TARGET.
     # The newly built compiler (xgcc) cannot run on BUILD machine.
+    # Use full paths to ensure we get the right tools.
     export CC_FOR_TARGET="${CC}"
     export CXX_FOR_TARGET="${CXX}"
-    export GCC_FOR_TARGET="${CTARGET}-gcc"
-    export GXX_FOR_TARGET="${CTARGET}-g++"
-    export AR_FOR_TARGET="${CTARGET}-ar"
-    export AS_FOR_TARGET="${CTARGET}-as"
-    export LD_FOR_TARGET="${CTARGET}-ld"
-    export NM_FOR_TARGET="${CTARGET}-nm"
-    export RANLIB_FOR_TARGET="${CTARGET}-ranlib"
-    export STRIP_FOR_TARGET="${CTARGET}-strip"
-    export OBJCOPY_FOR_TARGET="${CTARGET}-objcopy"
-    export OBJDUMP_FOR_TARGET="${CTARGET}-objdump"
+    export GCC_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-gcc"
+    export GXX_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-g++"
+    export AR_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-ar"
+    export AS_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-as"
+    export LD_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-ld"
+    export NM_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-nm"
+    export RANLIB_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-ranlib"
+    export STRIP_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-strip"
+    export OBJCOPY_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-objcopy"
+    export OBJDUMP_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-objdump"
 
     # Build tools - must run on the BUILD machine, not the HOST
     # NOTE: We intentionally do NOT export CC_FOR_BUILD/CXX_FOR_BUILD as environment
@@ -941,9 +944,10 @@ build_gcc() {
     # pointing to the stage 1 cross-compiler, because the newly built xgcc
     # is an OHOS binary that cannot run on the Linux build machine.
     # We also need to ensure stage 1 tools are in PATH for sub-configures.
+    # Use full path to avoid picking up wrong gcc from install prefix.
     if is_canadian_cross; then
         PATH="${STAGE1_PREFIX}/bin:${PATH}" make -j"${JOBS}" \
-            GCC_FOR_TARGET="${CTARGET}-gcc" \
+            GCC_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-gcc" \
             || error "Build failed"
     else
         make -j"${JOBS}" || error "Build failed"
@@ -957,9 +961,10 @@ install_gcc() {
     # For Canadian Cross builds, pass GCC_FOR_TARGET to avoid trying to run
     # the newly built OHOS binaries on the Linux build machine.
     # Also ensure stage 1 tools are in PATH.
+    # Use full path to avoid picking up wrong gcc from install prefix.
     if is_canadian_cross; then
         PATH="${STAGE1_PREFIX}/bin:${PATH}" make install DESTDIR="${DESTDIR:-}" \
-            GCC_FOR_TARGET="${CTARGET}-gcc" \
+            GCC_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-gcc" \
             || error "Installation failed"
     else
         make install DESTDIR="${DESTDIR:-}" || error "Installation failed"
