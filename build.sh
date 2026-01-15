@@ -985,16 +985,17 @@ configure_gcc() {
         msg "Canadian Cross: Using bundled zlib, enabling host PIE, and using stage 1 build-time tools"
     fi
 
-    # Run configure - for Canadian Cross, pass CC_FOR_BUILD/CXX_FOR_BUILD explicitly
-    # using env command to set them as environment variables for configure only.
-    # This avoids exporting them globally (which can cause GMP configure race
-    # conditions) while still ensuring the correct build compiler is used.
-    local env_prefix=""
+    # Run configure - for Canadian Cross, we need to set CC_FOR_BUILD/CXX_FOR_BUILD
+    # as environment variables. GMP's configure uses $CC_FOR_BUILD directly without
+    # CFLAGS_FOR_BUILD, so we must include -B option in CC_FOR_BUILD itself.
+    # We use a subshell with export to avoid polluting the parent shell.
     if is_canadian_cross; then
-        env_prefix="env CC_FOR_BUILD=${CC_FOR_BUILD} CXX_FOR_BUILD=${CXX_FOR_BUILD}"
+        # Export CC_FOR_BUILD with -B option to ensure GMP configure can link
+        export CC_FOR_BUILD="${CC_FOR_BUILD} -B/usr/bin"
+        export CXX_FOR_BUILD="${CXX_FOR_BUILD} -B/usr/bin"
     fi
     
-    ${env_prefix} "${SOURCE_DIR}/configure" \
+    "${SOURCE_DIR}/configure" \
         --prefix="${INSTALL_PREFIX}" \
         --mandir="${INSTALL_PREFIX}/share/man" \
         --infodir="${INSTALL_PREFIX}/share/info" \
