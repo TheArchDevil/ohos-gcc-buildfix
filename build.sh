@@ -184,6 +184,60 @@ error() {
     exit 1
 }
 
+# Normalize a path to absolute form
+# Usage: normalized=$(normalize_path "/some/path" [must_exist])
+# If must_exist is "true", uses readlink -f (path must exist)
+# Otherwise uses realpath -m or manual conversion (path can be non-existent)
+normalize_path() {
+    local path="$1"
+    local must_exist="${2:-false}"
+    
+    [ -z "${path}" ] && return 0
+    
+    if [ "${must_exist}" = "true" ]; then
+        readlink -f "${path}" || return 1
+    else
+        if command -v realpath >/dev/null 2>&1; then
+            realpath -m "${path}"
+        else
+            case "${path}" in
+                /*) echo "${path}" ;;
+                *)  echo "${PWD}/${path}" ;;
+            esac
+        fi
+    fi
+}
+
+# Generic function to apply patches to a directory
+# Usage: apply_patches_to_dir <name> <target_dir> <patches_dir>
+apply_patches_to_dir() {
+    local name="$1"
+    local target_dir="$2"
+    local patches_dir="$3"
+    
+    if [ ! -d "${target_dir}" ]; then
+        msg "${name} directory not found, skipping patches"
+        return 0
+    fi
+    
+    if [ ! -d "${patches_dir}" ]; then
+        return 0
+    fi
+    
+    local real_target_dir
+    real_target_dir=$(readlink -f "${target_dir}")
+    
+    msg "Applying ${name} patches for OHOS support..."
+    
+    for patch in "${patches_dir}"/*.patch; do
+        [ -f "${patch}" ] || continue
+        msg "Applying $(basename "${patch}") to ${name}..."
+        cd "${real_target_dir}"
+        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
+        cd "${SCRIPT_DIR}"
+    done
+}
+
 # Check if this is a Canadian Cross build (stage 2)
 is_canadian_cross() {
     [ "${CBUILD}" != "${CHOST}" ] && [ "${CHOST}" = "${CTARGET}" ]
@@ -500,20 +554,18 @@ prepare_binutils() {
 build_binutils() {
     prepare_binutils
 
-    # Setup build environment based on build type
+    # Check toolchains first (before subshell)
     if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
         check_stage2_toolchain
-        setup_native_ohos_env
     elif is_canadian_cross; then
         check_stage1_toolchain
-        setup_canadian_cross_env
     fi
 
     msg "Configuring binutils for ${CTARGET}..."
     msg "  CBUILD=${CBUILD}, CHOST=${CHOST}, CTARGET=${CTARGET}"
     mkdir -p "${BINUTILS_BUILD_DIR}"
-    cd "${BINUTILS_BUILD_DIR}"
 
+    # Prepare configure arguments (in parent shell)
     local configure_args=(
         "${BINUTILS_SOURCE_DIR}/configure"
         "--prefix=${BINUTILS_INSTALL_PREFIX}"
@@ -529,8 +581,6 @@ build_binutils() {
     )
 
     # For cross-compiler builds (Stage 1), disable installation of unprefixed tools
-    # to avoid polluting the install directory with tools that could conflict
-    # with system tools. Only install ${CTARGET}-prefixed tools.
     if [ "${CHOST}" = "${CBUILD}" ] && [ "${CTARGET}" != "${CBUILD}" ]; then
         configure_args+=("--program-prefix=${CTARGET}-")
     fi
@@ -540,22 +590,37 @@ build_binutils() {
     fi
 
     # For Canadian Cross builds, disable plugins to avoid LTO issues
-    # where build-time tools might try to load incompatible plugins
     if is_canadian_cross; then
         configure_args+=("--disable-plugins")
     fi
 
-    "${configure_args[@]}" || error "Binutils configuration failed"
+    # Run configure and build in a subshell to avoid polluting parent environment
+    (
+        cd "${BINUTILS_BUILD_DIR}"
+        
+        # Setup build environment based on build type (inside subshell)
+        if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
+            setup_native_ohos_env
+        elif is_canadian_cross; then
+            setup_canadian_cross_env
+        fi
 
-    # Pass CC_FOR_BUILD explicitly to make for Canadian Cross
-    # Use the exported CC_FOR_BUILD which is set in setup_canadian_cross_env()
-    if is_canadian_cross; then
-        make -j"${JOBS}" MAKEINFO=true CC_FOR_BUILD="${CC_FOR_BUILD}" CXX_FOR_BUILD="${CXX_FOR_BUILD}" \
-            || error "Binutils build failed"
-    else
-        make -j"${JOBS}" MAKEINFO=true || error "Binutils build failed"
-    fi
-    make install DESTDIR="${DESTDIR:-}" MAKEINFO=true || error "Binutils install failed"
+        "${configure_args[@]}" || exit 1
+
+        # Pass CC_FOR_BUILD explicitly to make for Canadian Cross
+        if is_canadian_cross; then
+            make -j"${JOBS}" MAKEINFO=true \
+                CC_FOR_BUILD="${CC_FOR_BUILD}" \
+                CXX_FOR_BUILD="${CXX_FOR_BUILD}" \
+                AR_FOR_BUILD="${AR_FOR_BUILD}" \
+                RANLIB_FOR_BUILD="${RANLIB_FOR_BUILD}" \
+                || exit 1
+        else
+            make -j"${JOBS}" MAKEINFO=true || exit 1
+        fi
+        
+        make install DESTDIR="${DESTDIR:-}" MAKEINFO=true || exit 1
+    ) || error "Binutils build failed"
 
     cd "${SCRIPT_DIR}"
 }
@@ -628,139 +693,25 @@ apply_prerequisite_patches() {
     apply_gettext_patches
 }
 
-# Apply patches to GMP for OHOS support
+# Apply patches to GCC prerequisites using the generic function
 apply_gmp_patches() {
-    local gmp_dir="${SOURCE_DIR}/gmp"
-
-    if [ ! -d "${gmp_dir}" ]; then
-        msg "GMP directory not found, skipping patches"
-        return 0
-    fi
-
-    local real_gmp_dir
-    real_gmp_dir=$(readlink -f "${gmp_dir}")
-
-    if [ ! -d "${SCRIPT_DIR}/gmp-patches" ]; then
-        return 0
-    fi
-
-    msg "Applying GMP patches for OHOS support..."
-
-    for patch in "${SCRIPT_DIR}"/gmp-patches/*.patch; do
-        [ -f "${patch}" ] || continue
-        msg "Applying $(basename "${patch}") to GMP..."
-        cd "${real_gmp_dir}"
-        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
-        cd "${SCRIPT_DIR}"
-    done
+    apply_patches_to_dir "GMP" "${SOURCE_DIR}/gmp" "${SCRIPT_DIR}/gmp-patches"
 }
 
-# Apply patches to MPFR for OHOS support
 apply_mpfr_patches() {
-    local mpfr_dir="${SOURCE_DIR}/mpfr"
-
-    if [ ! -d "${mpfr_dir}" ]; then
-        msg "MPFR directory not found, skipping patches"
-        return 0
-    fi
-
-    local real_mpfr_dir
-    real_mpfr_dir=$(readlink -f "${mpfr_dir}")
-
-    if [ ! -d "${SCRIPT_DIR}/mpfr-patches" ]; then
-        return 0
-    fi
-
-    msg "Applying MPFR patches for OHOS support..."
-
-    for patch in "${SCRIPT_DIR}"/mpfr-patches/*.patch; do
-        [ -f "${patch}" ] || continue
-        msg "Applying $(basename "${patch}") to MPFR..."
-        cd "${real_mpfr_dir}"
-        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
-        cd "${SCRIPT_DIR}"
-    done
+    apply_patches_to_dir "MPFR" "${SOURCE_DIR}/mpfr" "${SCRIPT_DIR}/mpfr-patches"
 }
 
-# Apply patches to MPC for OHOS support
 apply_mpc_patches() {
-    local mpc_dir="${SOURCE_DIR}/mpc"
-
-    if [ ! -d "${mpc_dir}" ]; then
-        msg "MPC directory not found, skipping patches"
-        return 0
-    fi
-
-    local real_mpc_dir
-    real_mpc_dir=$(readlink -f "${mpc_dir}")
-
-    if [ ! -d "${SCRIPT_DIR}/mpc-patches" ]; then
-        return 0
-    fi
-
-    msg "Applying MPC patches for OHOS support..."
-
-    for patch in "${SCRIPT_DIR}"/mpc-patches/*.patch; do
-        [ -f "${patch}" ] || continue
-        msg "Applying $(basename "${patch}") to MPC..."
-        cd "${real_mpc_dir}"
-        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
-        cd "${SCRIPT_DIR}"
-    done
+    apply_patches_to_dir "MPC" "${SOURCE_DIR}/mpc" "${SCRIPT_DIR}/mpc-patches"
 }
 
-# Apply patches to ISL for OHOS support
 apply_isl_patches() {
-    local isl_dir="${SOURCE_DIR}/isl"
-
-    if [ ! -d "${isl_dir}" ]; then
-        msg "ISL directory not found, skipping patches"
-        return 0
-    fi
-
-    local real_isl_dir
-    real_isl_dir=$(readlink -f "${isl_dir}")
-
-    if [ ! -d "${SCRIPT_DIR}/isl-patches" ]; then
-        return 0
-    fi
-
-    msg "Applying ISL patches for OHOS support..."
-
-    for patch in "${SCRIPT_DIR}"/isl-patches/*.patch; do
-        [ -f "${patch}" ] || continue
-        msg "Applying $(basename "${patch}") to ISL..."
-        cd "${real_isl_dir}"
-        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
-        cd "${SCRIPT_DIR}"
-    done
+    apply_patches_to_dir "ISL" "${SOURCE_DIR}/isl" "${SCRIPT_DIR}/isl-patches"
 }
 
-# Apply patches to gettext for OHOS support
 apply_gettext_patches() {
-    local gettext_dir="${SOURCE_DIR}/gettext"
-
-    if [ ! -d "${gettext_dir}" ]; then
-        msg "gettext directory not found, skipping patches"
-        return 0
-    fi
-
-    local real_gettext_dir
-    real_gettext_dir=$(readlink -f "${gettext_dir}")
-
-    if [ ! -d "${SCRIPT_DIR}/gettext-patches" ]; then
-        return 0
-    fi
-
-    msg "Applying gettext patches for OHOS support..."
-
-    for patch in "${SCRIPT_DIR}"/gettext-patches/*.patch; do
-        [ -f "${patch}" ] || continue
-        msg "Applying $(basename "${patch}") to gettext..."
-        cd "${real_gettext_dir}"
-        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
-        cd "${SCRIPT_DIR}"
-    done
+    apply_patches_to_dir "gettext" "${SOURCE_DIR}/gettext" "${SCRIPT_DIR}/gettext-patches"
 }
 
 prepare_gcc() {
@@ -1158,62 +1109,32 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# Normalize all path arguments to absolute form
+# Normalize all path arguments to absolute form using normalize_path()
 # This allows users to specify relative paths like ./install
 
-# Normalize install prefix to absolute form
-if [ -n "${INSTALL_PREFIX}" ]; then
-    # For paths that don't exist yet, we need to handle differently
-    # Use realpath with -m to allow non-existent paths
-    if command -v realpath >/dev/null 2>&1; then
-        INSTALL_PREFIX=$(realpath -m "${INSTALL_PREFIX}")
-    else
-        # Fallback: convert relative to absolute manually
-        case "${INSTALL_PREFIX}" in
-            /*) ;; # Already absolute
-            *)  INSTALL_PREFIX="${PWD}/${INSTALL_PREFIX}" ;;
-        esac
-    fi
-fi
+# Paths that may not exist yet (use normalize_path without must_exist)
+INSTALL_PREFIX=$(normalize_path "${INSTALL_PREFIX}")
 
-# Also normalize BINUTILS_INSTALL_PREFIX if it was set explicitly
-# Otherwise it inherits from INSTALL_PREFIX (set default if not already set)
+# BINUTILS_INSTALL_PREFIX inherits from INSTALL_PREFIX if not set
 BINUTILS_INSTALL_PREFIX="${BINUTILS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
-if [ "${BINUTILS_INSTALL_PREFIX}" != "${INSTALL_PREFIX}" ] && [ -n "${BINUTILS_INSTALL_PREFIX}" ]; then
-    if command -v realpath >/dev/null 2>&1; then
-        BINUTILS_INSTALL_PREFIX=$(realpath -m "${BINUTILS_INSTALL_PREFIX}")
-    else
-        case "${BINUTILS_INSTALL_PREFIX}" in
-            /*) ;;
-            *)  BINUTILS_INSTALL_PREFIX="${PWD}/${BINUTILS_INSTALL_PREFIX}" ;;
-        esac
-    fi
-else
-    BINUTILS_INSTALL_PREFIX="${INSTALL_PREFIX}"
+if [ "${BINUTILS_INSTALL_PREFIX}" != "${INSTALL_PREFIX}" ]; then
+    BINUTILS_INSTALL_PREFIX=$(normalize_path "${BINUTILS_INSTALL_PREFIX}")
 fi
 
-# Normalize stage1 prefix to absolute form if provided
+# Paths that must exist (stage prefixes, sysroot)
 if [ -n "${STAGE1_PREFIX}" ]; then
-    if ! resolved_stage1=$(readlink -f "${STAGE1_PREFIX}"); then
+    STAGE1_PREFIX=$(normalize_path "${STAGE1_PREFIX}" true) || \
         error "Failed to resolve stage1 path: ${STAGE1_PREFIX}"
-    fi
-    STAGE1_PREFIX="${resolved_stage1}"
 fi
 
-# Normalize stage2 prefix to absolute form if provided
 if [ -n "${STAGE2_PREFIX}" ]; then
-    if ! resolved_stage2=$(readlink -f "${STAGE2_PREFIX}"); then
+    STAGE2_PREFIX=$(normalize_path "${STAGE2_PREFIX}" true) || \
         error "Failed to resolve stage2 path: ${STAGE2_PREFIX}"
-    fi
-    STAGE2_PREFIX="${resolved_stage2}"
 fi
 
-# Normalize sysroot path to absolute form if provided
 if [ -n "${SYSROOT}" ]; then
-    if ! resolved_sysroot=$(readlink -f "${SYSROOT}"); then
+    SYSROOT=$(normalize_path "${SYSROOT}" true) || \
         error "Failed to resolve sysroot path: ${SYSROOT}"
-    fi
-    SYSROOT="${resolved_sysroot}"
 fi
 
 # Resolve defaults that depend on parsed values
