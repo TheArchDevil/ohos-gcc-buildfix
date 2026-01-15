@@ -296,17 +296,23 @@ setup_canadian_cross_env() {
     export OBJDUMP_FOR_TARGET="${CTARGET}-objdump"
 
     # Build tools - must run on the BUILD machine, not the HOST
-    # These are native compilers that build tools that run during compilation
-    # Use the triplet-prefixed version (e.g., x86_64-linux-gnu-gcc) for consistency
-    # with how GCC's build system auto-detects these in Stage 1 builds.
-    # Fall back to plain gcc/g++ if triplet-prefixed version doesn't exist.
-    if command -v "${CBUILD}-gcc" >/dev/null 2>&1; then
-        export CC_FOR_BUILD="${CBUILD}-gcc"
-        export CXX_FOR_BUILD="${CBUILD}-g++"
-    else
-        export CC_FOR_BUILD="gcc"
-        export CXX_FOR_BUILD="g++"
+    # NOTE: We intentionally do NOT export CC_FOR_BUILD/CXX_FOR_BUILD as environment
+    # variables. When exported, GMP's configure script tries to validate CC_FOR_BUILD
+    # by running a test program. In parallel builds, multiple configure scripts may
+    # interfere with each other's conftest files, causing spurious failures.
+    # 
+    # Instead, we let GCC's configure auto-detect CC_FOR_BUILD (which defaults to gcc)
+    # and pass it properly to sub-projects through the build system, avoiding the
+    # parallel configure race condition.
+    #
+    # We still set these as shell variables (not exported) for local use in binutils build.
+    CC_FOR_BUILD="${CBUILD}-gcc"
+    CXX_FOR_BUILD="${CBUILD}-g++"
+    if ! command -v "${CC_FOR_BUILD}" >/dev/null 2>&1; then
+        CC_FOR_BUILD="gcc"
+        CXX_FOR_BUILD="g++"
     fi
+    # Only export the flags, not the compiler commands
     export CFLAGS_FOR_BUILD="-g -O2"
     export CXXFLAGS_FOR_BUILD="-g -O2"
     export LDFLAGS_FOR_BUILD=""
@@ -314,7 +320,7 @@ setup_canadian_cross_env() {
     msg "Canadian Cross environment configured:"
     echo "  PATH includes: ${STAGE1_PREFIX}/bin"
     echo "  CC=${CC}"
-    echo "  CC_FOR_BUILD=${CC_FOR_BUILD}"
+    echo "  CC_FOR_BUILD=${CC_FOR_BUILD} (not exported, to avoid GMP configure race)"
     echo "  GCC_FOR_TARGET=${GCC_FOR_TARGET}"
     echo "  CFLAGS=${CFLAGS}"
     echo "  LDFLAGS=${LDFLAGS}"
