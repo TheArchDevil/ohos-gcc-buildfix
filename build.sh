@@ -33,7 +33,7 @@ SYSROOT="${SYSROOT:-}"
 BINUTILS_VERSION="${BINUTILS_VERSION:-2.43}"
 BINUTILS_SOURCE_DIR="${SCRIPT_DIR}/binutils-${BINUTILS_VERSION}"
 BINUTILS_BUILD_DIR="${SCRIPT_DIR}/build-binutils"
-BINUTILS_INSTALL_PREFIX="${BINUTILS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
+# BINUTILS_INSTALL_PREFIX is set after command line parsing to use the correct INSTALL_PREFIX
 
 # Stage 2 (Canadian Cross) configuration
 # When building native OHOS toolchain, we need a stage 1 cross-compiler
@@ -269,6 +269,13 @@ setup_canadian_cross_env() {
     export OBJCOPY="${STAGE1_PREFIX}/bin/${CTARGET}-objcopy"
     export OBJDUMP="${STAGE1_PREFIX}/bin/${CTARGET}-objdump"
 
+    # Note: Do NOT set PIE flags here manually. GCC's configure will detect PIE requirements
+    # and set PICFLAG/LD_PICFLAG appropriately. For Canadian Cross to OHOS, we use
+    # --enable-host-pie in configure_gcc() to build PIE-compatible host tools.
+    export CFLAGS="${CFLAGS:--g -O2}"
+    export CXXFLAGS="${CXXFLAGS:--g -O2}"
+    export LDFLAGS="${LDFLAGS:-}"
+
     # For native OHOS build, target tools are the same as host tools
     export CC_FOR_TARGET="${CC}"
     export CXX_FOR_TARGET="${CXX}"
@@ -281,11 +288,22 @@ setup_canadian_cross_env() {
     export OBJCOPY_FOR_TARGET="${OBJCOPY}"
     export OBJDUMP_FOR_TARGET="${OBJDUMP}"
 
+    # Build tools - must run on the BUILD machine, not the HOST
+    # These are native compilers that build tools that run during compilation
+    export CC_FOR_BUILD="gcc"
+    export CXX_FOR_BUILD="g++"
+    export CFLAGS_FOR_BUILD="-g -O2"
+    export CXXFLAGS_FOR_BUILD="-g -O2"
+    export LDFLAGS_FOR_BUILD=""
+
     # Add stage 1 toolchain to PATH
     export PATH="${STAGE1_PREFIX}/bin:${PATH}"
 
     msg "Canadian Cross environment configured:"
     echo "  CC=${CC}"
+    echo "  CC_FOR_BUILD=${CC_FOR_BUILD}"
+    echo "  CFLAGS=${CFLAGS}"
+    echo "  LDFLAGS=${LDFLAGS}"
     echo "  CBUILD=${CBUILD}"
     echo "  CHOST=${CHOST}"
     echo "  CTARGET=${CTARGET}"
@@ -464,9 +482,21 @@ build_binutils() {
         configure_args+=("--with-sysroot=${SYSROOT}")
     fi
 
+    # For Canadian Cross builds, disable plugins to avoid LTO issues
+    # where build-time tools might try to load incompatible plugins
+    if is_canadian_cross; then
+        configure_args+=("--disable-plugins")
+    fi
+
     "${configure_args[@]}" || error "Binutils configuration failed"
 
-    make -j"${JOBS}" MAKEINFO=true || error "Binutils build failed"
+    # Pass CC_FOR_BUILD explicitly to make for Canadian Cross
+    if is_canadian_cross; then
+        make -j"${JOBS}" MAKEINFO=true CC_FOR_BUILD="gcc" CXX_FOR_BUILD="g++" \
+            || error "Binutils build failed"
+    else
+        make -j"${JOBS}" MAKEINFO=true || error "Binutils build failed"
+    fi
     make install DESTDIR="${DESTDIR:-}" MAKEINFO=true || error "Binutils install failed"
 
     cd "${SCRIPT_DIR}"
@@ -862,6 +892,8 @@ configure_gcc() {
     
     # Configure GCC
     local cross_configure=()
+    local zlib_configure="--with-system-zlib"
+    
     if [ "${CBUILD}" != "${CHOST}" ] || [ "${CHOST}" != "${CTARGET}" ]; then
         cross_configure+=("--disable-bootstrap")
         # Note: We keep PIE enabled for cross-compilation because OHOS uses PIE.
@@ -870,6 +902,15 @@ configure_gcc() {
     fi
     if [ "${CHOST}" != "${CTARGET}" ] && [ -n "${SYSROOT}" ]; then
         cross_configure+=("--with-sysroot=${SYSROOT}")
+    fi
+    
+    # For Canadian Cross builds, use bundled zlib since OHOS sysroot may not have it
+    # Also enable host PIE since OHOS defaults to PIE
+    local host_pie_configure=""
+    if is_canadian_cross; then
+        zlib_configure=""
+        host_pie_configure="--enable-host-pie"
+        msg "Canadian Cross: Using bundled zlib and enabling host PIE"
     fi
 
     "${SOURCE_DIR}/configure" \
@@ -881,7 +922,8 @@ configure_gcc() {
         --target="${CTARGET}" \
         --with-pkgversion="OHOS GCC ${GCC_VERSION}" \
         --with-bugurl="https://github.com/sanchuanhehe/ohos-gcc" \
-        --with-system-zlib \
+        ${zlib_configure} \
+        ${host_pie_configure} \
         --enable-checking=release \
         --enable-languages="${LANGUAGES}" \
         --enable-__cxa_atexit \
@@ -1083,7 +1125,8 @@ if [ -n "${INSTALL_PREFIX}" ]; then
 fi
 
 # Also normalize BINUTILS_INSTALL_PREFIX if it was set explicitly
-# Otherwise it inherits from INSTALL_PREFIX
+# Otherwise it inherits from INSTALL_PREFIX (set default if not already set)
+BINUTILS_INSTALL_PREFIX="${BINUTILS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
 if [ "${BINUTILS_INSTALL_PREFIX}" != "${INSTALL_PREFIX}" ] && [ -n "${BINUTILS_INSTALL_PREFIX}" ]; then
     if command -v realpath >/dev/null 2>&1; then
         BINUTILS_INSTALL_PREFIX=$(realpath -m "${BINUTILS_INSTALL_PREFIX}")
