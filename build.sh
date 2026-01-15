@@ -35,6 +35,16 @@ BINUTILS_SOURCE_DIR="${SCRIPT_DIR}/binutils-${BINUTILS_VERSION}"
 BINUTILS_BUILD_DIR="${SCRIPT_DIR}/build-binutils"
 BINUTILS_INSTALL_PREFIX="${BINUTILS_INSTALL_PREFIX:-${INSTALL_PREFIX}}"
 
+# Stage 2 (Canadian Cross) configuration
+# When building native OHOS toolchain, we need a stage 1 cross-compiler
+# STAGE1_PREFIX points to the previously built cross-compiler
+STAGE1_PREFIX="${STAGE1_PREFIX:-}"
+
+# Stage 3 (Native bootstrap) configuration
+# When building on OHOS itself, we need a stage 2 native compiler
+# STAGE2_PREFIX points to the previously built native OHOS compiler
+STAGE2_PREFIX="${STAGE2_PREFIX:-}"
+
 # NDK configuration
 NDK_URL="${NDK_URL:-https://cidownload.openharmony.cn/version/Daily_Version/LLVM-19/20260114_061434/version-Daily_Version-LLVM-19-20260114_061434-LLVM-19.tar.gz}"
 NDK_DIR="${SCRIPT_DIR}/ndk"
@@ -153,6 +163,10 @@ LIBITM="${LIBITM:-no}"
 LIBQUADMATH="${LIBQUADMATH:-no}"
 
 # Cross-compilation configuration will be resolved during configure phase
+# Build types:
+#   Stage 1 (cross):     CBUILD=host, CHOST=host,   CTARGET=ohos  (cross-compiler)
+#   Stage 2 (Canadian):  CBUILD=host, CHOST=ohos,   CTARGET=ohos  (native compiler)
+# Stage 2 requires STAGE1_PREFIX pointing to a working stage 1 cross-compiler
 
 # Parallel build
 JOBS="${JOBS:-$(nproc)}"
@@ -168,6 +182,165 @@ msg() {
 error() {
     echo "ERROR: $*" >&2
     exit 1
+}
+
+# Check if this is a Canadian Cross build (stage 2)
+is_canadian_cross() {
+    [ "${CBUILD}" != "${CHOST}" ] && [ "${CHOST}" = "${CTARGET}" ]
+}
+
+# Check if this is a native OHOS build (stage 3)
+# All three triplets are the same and are OHOS targets
+is_native_ohos_build() {
+    [ "${CBUILD}" = "${CHOST}" ] && [ "${CHOST}" = "${CTARGET}" ] && [[ "${CTARGET}" == *-linux-ohos ]]
+}
+
+# Verify stage 1 toolchain exists and is functional
+check_stage1_toolchain() {
+    if [ -z "${STAGE1_PREFIX}" ]; then
+        error "STAGE1_PREFIX not set. Stage 2 build requires a stage 1 cross-compiler.
+Use --stage1=/path/to/stage1/install to specify it."
+    fi
+
+    msg "Checking stage 1 toolchain at ${STAGE1_PREFIX}..."
+
+    local cc="${STAGE1_PREFIX}/bin/${CTARGET}-gcc"
+    local cxx="${STAGE1_PREFIX}/bin/${CTARGET}-g++"
+    local ar="${STAGE1_PREFIX}/bin/${CTARGET}-ar"
+    local as="${STAGE1_PREFIX}/bin/${CTARGET}-as"
+    local ld="${STAGE1_PREFIX}/bin/${CTARGET}-ld"
+
+    for tool in "${cc}" "${cxx}" "${ar}" "${as}" "${ld}"; do
+        if [ ! -x "${tool}" ]; then
+            error "Stage 1 tool not found: ${tool}
+Make sure stage 1 cross-compiler is properly installed at ${STAGE1_PREFIX}"
+        fi
+    done
+
+    msg "Stage 1 toolchain verified: $("${cc}" --version | head -1)"
+}
+
+# Verify stage 2 toolchain exists and is functional
+check_stage2_toolchain() {
+    if [ -z "${STAGE2_PREFIX}" ]; then
+        error "STAGE2_PREFIX not set. Stage 3 build requires a stage 2 native compiler.
+Use --stage2=/path/to/stage2/install to specify it."
+    fi
+
+    msg "Checking stage 2 toolchain at ${STAGE2_PREFIX}..."
+
+    # Stage 2 produces native tools, check for both prefixed and unprefixed names
+    local cc="${STAGE2_PREFIX}/bin/gcc"
+    local cxx="${STAGE2_PREFIX}/bin/g++"
+    local ar="${STAGE2_PREFIX}/bin/ar"
+    local as="${STAGE2_PREFIX}/bin/as"
+    local ld="${STAGE2_PREFIX}/bin/ld"
+
+    # Fall back to target-prefixed names if unprefixed not found
+    [ ! -x "${cc}" ] && cc="${STAGE2_PREFIX}/bin/${CTARGET}-gcc"
+    [ ! -x "${cxx}" ] && cxx="${STAGE2_PREFIX}/bin/${CTARGET}-g++"
+    [ ! -x "${ar}" ] && ar="${STAGE2_PREFIX}/bin/${CTARGET}-ar"
+    [ ! -x "${as}" ] && as="${STAGE2_PREFIX}/bin/${CTARGET}-as"
+    [ ! -x "${ld}" ] && ld="${STAGE2_PREFIX}/bin/${CTARGET}-ld"
+
+    for tool in "${cc}" "${cxx}" "${ar}" "${as}" "${ld}"; do
+        if [ ! -x "${tool}" ]; then
+            error "Stage 2 tool not found: ${tool}
+Make sure stage 2 native compiler is properly installed at ${STAGE2_PREFIX}"
+        fi
+    done
+
+    msg "Stage 2 toolchain verified: $("${cc}" --version | head -1)"
+}
+
+# Setup environment for Canadian Cross build (stage 2)
+setup_canadian_cross_env() {
+    msg "Setting up Canadian Cross (stage 2) build environment..."
+
+    # Use stage 1 cross-compiler as the host compiler
+    export CC="${STAGE1_PREFIX}/bin/${CTARGET}-gcc"
+    export CXX="${STAGE1_PREFIX}/bin/${CTARGET}-g++"
+    export AR="${STAGE1_PREFIX}/bin/${CTARGET}-ar"
+    export AS="${STAGE1_PREFIX}/bin/${CTARGET}-as"
+    export LD="${STAGE1_PREFIX}/bin/${CTARGET}-ld"
+    export NM="${STAGE1_PREFIX}/bin/${CTARGET}-nm"
+    export RANLIB="${STAGE1_PREFIX}/bin/${CTARGET}-ranlib"
+    export STRIP="${STAGE1_PREFIX}/bin/${CTARGET}-strip"
+    export OBJCOPY="${STAGE1_PREFIX}/bin/${CTARGET}-objcopy"
+    export OBJDUMP="${STAGE1_PREFIX}/bin/${CTARGET}-objdump"
+
+    # For native OHOS build, target tools are the same as host tools
+    export CC_FOR_TARGET="${CC}"
+    export CXX_FOR_TARGET="${CXX}"
+    export AR_FOR_TARGET="${AR}"
+    export AS_FOR_TARGET="${AS}"
+    export LD_FOR_TARGET="${LD}"
+    export NM_FOR_TARGET="${NM}"
+    export RANLIB_FOR_TARGET="${RANLIB}"
+    export STRIP_FOR_TARGET="${STRIP}"
+    export OBJCOPY_FOR_TARGET="${OBJCOPY}"
+    export OBJDUMP_FOR_TARGET="${OBJDUMP}"
+
+    # Add stage 1 toolchain to PATH
+    export PATH="${STAGE1_PREFIX}/bin:${PATH}"
+
+    msg "Canadian Cross environment configured:"
+    echo "  CC=${CC}"
+    echo "  CBUILD=${CBUILD}"
+    echo "  CHOST=${CHOST}"
+    echo "  CTARGET=${CTARGET}"
+}
+
+# Setup environment for native OHOS build (stage 3)
+setup_native_ohos_env() {
+    msg "Setting up native OHOS (stage 3) build environment..."
+
+    # Use stage 2 native compiler as the host/target compiler
+    # Try unprefixed first, fall back to prefixed
+    if [ -x "${STAGE2_PREFIX}/bin/gcc" ]; then
+        export CC="${STAGE2_PREFIX}/bin/gcc"
+        export CXX="${STAGE2_PREFIX}/bin/g++"
+        export AR="${STAGE2_PREFIX}/bin/ar"
+        export AS="${STAGE2_PREFIX}/bin/as"
+        export LD="${STAGE2_PREFIX}/bin/ld"
+        export NM="${STAGE2_PREFIX}/bin/nm"
+        export RANLIB="${STAGE2_PREFIX}/bin/ranlib"
+        export STRIP="${STAGE2_PREFIX}/bin/strip"
+        export OBJCOPY="${STAGE2_PREFIX}/bin/objcopy"
+        export OBJDUMP="${STAGE2_PREFIX}/bin/objdump"
+    else
+        export CC="${STAGE2_PREFIX}/bin/${CTARGET}-gcc"
+        export CXX="${STAGE2_PREFIX}/bin/${CTARGET}-g++"
+        export AR="${STAGE2_PREFIX}/bin/${CTARGET}-ar"
+        export AS="${STAGE2_PREFIX}/bin/${CTARGET}-as"
+        export LD="${STAGE2_PREFIX}/bin/${CTARGET}-ld"
+        export NM="${STAGE2_PREFIX}/bin/${CTARGET}-nm"
+        export RANLIB="${STAGE2_PREFIX}/bin/${CTARGET}-ranlib"
+        export STRIP="${STAGE2_PREFIX}/bin/${CTARGET}-strip"
+        export OBJCOPY="${STAGE2_PREFIX}/bin/${CTARGET}-objcopy"
+        export OBJDUMP="${STAGE2_PREFIX}/bin/${CTARGET}-objdump"
+    fi
+
+    # For native build, all tools are the same
+    export CC_FOR_TARGET="${CC}"
+    export CXX_FOR_TARGET="${CXX}"
+    export AR_FOR_TARGET="${AR}"
+    export AS_FOR_TARGET="${AS}"
+    export LD_FOR_TARGET="${LD}"
+    export NM_FOR_TARGET="${NM}"
+    export RANLIB_FOR_TARGET="${RANLIB}"
+    export STRIP_FOR_TARGET="${STRIP}"
+    export OBJCOPY_FOR_TARGET="${OBJCOPY}"
+    export OBJDUMP_FOR_TARGET="${OBJDUMP}"
+
+    # Add stage 2 toolchain to PATH
+    export PATH="${STAGE2_PREFIX}/bin:${PATH}"
+
+    msg "Native OHOS environment configured:"
+    echo "  CC=${CC}"
+    echo "  CBUILD=${CBUILD}"
+    echo "  CHOST=${CHOST}"
+    echo "  CTARGET=${CTARGET}"
 }
 
 # ============================================================================
@@ -259,7 +432,17 @@ prepare_binutils() {
 build_binutils() {
     prepare_binutils
 
+    # Setup build environment based on build type
+    if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
+        check_stage2_toolchain
+        setup_native_ohos_env
+    elif is_canadian_cross; then
+        check_stage1_toolchain
+        setup_canadian_cross_env
+    fi
+
     msg "Configuring binutils for ${CTARGET}..."
+    msg "  CBUILD=${CBUILD}, CHOST=${CHOST}, CTARGET=${CTARGET}"
     mkdir -p "${BINUTILS_BUILD_DIR}"
     cd "${BINUTILS_BUILD_DIR}"
 
@@ -271,6 +454,10 @@ build_binutils() {
         "--target=${CTARGET}"
         "--disable-nls"
         "--disable-werror"
+        "--disable-multilib"
+        "--disable-gprofng"
+        "--enable-default-hash-style=gnu"
+        "--with-pkgversion=OHOS Binutils ${BINUTILS_VERSION}"
     )
 
     if [ -n "${SYSROOT}" ]; then
@@ -351,6 +538,15 @@ configure_gcc() {
     apply_sysroot_patches
     prepare_gcc
 
+    # Setup build environment based on build type
+    if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
+        check_stage2_toolchain
+        setup_native_ohos_env
+    elif is_canadian_cross; then
+        check_stage1_toolchain
+        setup_canadian_cross_env
+    fi
+
     msg "Configuring GCC ${GCC_VERSION} for ${CTARGET}..."
 
     if [ -d "${BINUTILS_INSTALL_PREFIX}/bin" ]; then
@@ -414,15 +610,23 @@ configure_gcc() {
     fi
     
     # Configure flags for different build scenarios
-    if [ "${CHOST}" != "${CTARGET}" ]; then
-        # Cross-compilation: disable format-security warning
+    if is_canadian_cross; then
+        # Canadian Cross (stage 2): CBUILD != CHOST = CTARGET
+        # Host compiler is the stage 1 cross-compiler, target is native OHOS
+        export CFLAGS="${CFLAGS:-} -g0 -O2"
+        export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
+        export CFLAGS_FOR_TARGET="${CFLAGS}"
+        export CXXFLAGS_FOR_TARGET="${CXXFLAGS}"
+        export LDFLAGS_FOR_TARGET="${LDFLAGS:-}"
+    elif [ "${CHOST}" != "${CTARGET}" ]; then
+        # Stage 1 Cross-compilation: CHOST != CTARGET
         export CFLAGS="${CFLAGS:-} -g0 -O2"
         export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
         export CFLAGS_FOR_TARGET=" "
         export CXXFLAGS_FOR_TARGET=" "
         export LDFLAGS_FOR_TARGET=" "
     else
-        # Native build
+        # Native build: CBUILD = CHOST = CTARGET
         export CFLAGS="${CFLAGS:-} -g0 -O2"
         export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
         export CFLAGS_FOR_TARGET="${CFLAGS}"
@@ -432,7 +636,18 @@ configure_gcc() {
         export BOOT_LDFLAGS="${LDFLAGS:-}"
     fi
     
+    # Determine build type string for display
+    local build_type="native"
+    if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
+        build_type="native OHOS bootstrap (stage 3)"
+    elif is_canadian_cross; then
+        build_type="Canadian Cross (stage 2)"
+    elif [ "${CHOST}" != "${CTARGET}" ]; then
+        build_type="cross-compiler (stage 1)"
+    fi
+
     msg "Build configuration:"
+    echo "  Build type: ${build_type}"
     echo "  CBUILD=${CBUILD}"
     echo "  CHOST=${CHOST}"
     echo "  CTARGET=${CTARGET}"
@@ -440,6 +655,12 @@ configure_gcc() {
     echo "  LANGUAGES=${LANGUAGES}"
     echo "  INSTALL_PREFIX=${INSTALL_PREFIX}"
     echo "  SYSROOT=${SYSROOT}"
+    if is_canadian_cross; then
+        echo "  STAGE1_PREFIX=${STAGE1_PREFIX}"
+    fi
+    if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
+        echo "  STAGE2_PREFIX=${STAGE2_PREFIX}"
+    fi
     echo "  CROSS_COMPILE=${CROSS_COMPILE}"
     echo ""
 
@@ -474,7 +695,7 @@ configure_gcc() {
         --host="${CHOST}" \
         --target="${CTARGET}" \
         --with-pkgversion="OHOS GCC ${GCC_VERSION}" \
-        --with-bugurl="https://gitee.com/openharmony" \
+        --with-bugurl="https://github.com/sanchuanhehe/ohos-gcc" \
         --with-system-zlib \
         --enable-checking=release \
         --enable-languages="${LANGUAGES}" \
@@ -553,37 +774,61 @@ Commands:
 
 Options:
   --target=TARGET           Set target triplet (default: aarch64-linux-ohos)
-    --host=HOST               Set host triplet (default: auto-detected)
-    --build=BUILD             Set build triplet (default: auto-detected)
+  --host=HOST               Set host triplet (default: auto-detected)
+  --build=BUILD             Set build triplet (default: auto-detected)
   --prefix=PREFIX           Set installation prefix (default: ./install)
   --sysroot=SYSROOT         Set sysroot path for cross-compilation
                             (default: ndk/sysroot/CTARGET)
+  --stage1=PATH             Stage 1 cross-compiler prefix (for stage 2 builds)
+  --stage2=PATH             Stage 2 native compiler prefix (for stage 3 builds)
   --jobs=N                  Number of parallel jobs (default: $(nproc))
   --enable-languages=LIST   Comma-separated language list (default: c,c++)
   --help                    Show this help message
 
 Environment Variables:
   CTARGET                   Target triplet
-    CHOST                     Host triplet
-    CBUILD                    Build triplet
+  CHOST                     Host triplet
+  CBUILD                    Build triplet
   INSTALL_PREFIX            Installation prefix
-    BINUTILS_VERSION          Binutils version (default: ${BINUTILS_VERSION})
-    BINUTILS_INSTALL_PREFIX   Binutils installation prefix (default: same as INSTALL_PREFIX)
+  STAGE1_PREFIX             Stage 1 cross-compiler prefix (for stage 2)
+  STAGE2_PREFIX             Stage 2 native compiler prefix (for stage 3)
+  BINUTILS_VERSION          Binutils version (default: ${BINUTILS_VERSION})
+  BINUTILS_INSTALL_PREFIX   Binutils installation prefix (default: same as INSTALL_PREFIX)
   SYSROOT                   Sysroot path (default: ndk/sysroot/CTARGET)
   NDK_URL                   NDK download URL
   JOBS                      Number of parallel jobs
-    CROSS_COMPILE             Cross prefix override (default: target- when cross compiling)
+  CROSS_COMPILE             Cross prefix override (default: target- when cross compiling)
   LANG_*                    Enable/disable specific languages (yes/no)
 
+Build Types:
+  Stage 1 (Cross-compiler):
+    Builds on host (e.g., x86_64-linux-gnu) to produce a cross-compiler
+    that runs on host and targets OHOS.
+    CBUILD=CHOST=x86_64-linux-gnu, CTARGET=x86_64-linux-ohos
+
+  Stage 2 (Canadian Cross / Native compiler):
+    Uses stage 1 cross-compiler to build a native OHOS compiler.
+    The resulting compiler runs on OHOS and produces OHOS binaries.
+    CBUILD=x86_64-linux-gnu, CHOST=CTARGET=x86_64-linux-ohos
+    Requires --stage1 pointing to stage 1 installation.
+
+  Stage 3 (Native bootstrap):
+    Runs on OHOS using stage 2 compiler to rebuild itself.
+    Full native build: CBUILD=CHOST=CTARGET=x86_64-linux-ohos
+    Requires --stage2 pointing to stage 2 installation.
+
 Examples:
+  # Stage 1: Build cross-compiler for x86_64 OHOS
+  $0 --target=x86_64-linux-ohos --prefix=/opt/ohos-gcc-stage1
+
+  # Stage 2: Build native OHOS compiler (Canadian Cross)
+  $0 --build=x86_64-linux-gnu --host=x86_64-linux-ohos --target=x86_64-linux-ohos --stage1=/opt/ohos-gcc-stage1 --prefix=/opt/ohos-gcc-stage2
+
+  # Stage 3: Native bootstrap on OHOS (run inside OHOS)
+  $0 --build=x86_64-linux-ohos --host=x86_64-linux-ohos --target=x86_64-linux-ohos --stage2=/opt/ohos-gcc-stage2 --prefix=/opt/ohos-gcc
+
   # Build for AArch64 OHOS
   $0 --target=aarch64-linux-ohos --prefix=/opt/ohos-gcc
-
-  # Build for ARM OHOS with custom sysroot
-  $0 --target=arm-linux-ohos --sysroot=/path/to/sysroot
-
-  # Build with only C and C++ support
-  $0 --enable-languages=c,c++
 
 EOF
 }
@@ -611,6 +856,12 @@ while [ $# -gt 0 ]; do
         --sysroot=*)
             SYSROOT="${1#*=}"
             ;;
+        --stage1=*)
+            STAGE1_PREFIX="${1#*=}"
+            ;;
+        --stage2=*)
+            STAGE2_PREFIX="${1#*=}"
+            ;;
         --jobs=*)
             JOBS="${1#*=}"
             ;;
@@ -626,6 +877,22 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+# Normalize stage1 prefix to absolute form if provided
+if [ -n "${STAGE1_PREFIX}" ]; then
+    if ! resolved_stage1=$(readlink -f "${STAGE1_PREFIX}"); then
+        error "Failed to resolve stage1 path: ${STAGE1_PREFIX}"
+    fi
+    STAGE1_PREFIX="${resolved_stage1}"
+fi
+
+# Normalize stage2 prefix to absolute form if provided
+if [ -n "${STAGE2_PREFIX}" ]; then
+    if ! resolved_stage2=$(readlink -f "${STAGE2_PREFIX}"); then
+        error "Failed to resolve stage2 path: ${STAGE2_PREFIX}"
+    fi
+    STAGE2_PREFIX="${resolved_stage2}"
+fi
 
 # Normalize sysroot path to absolute form if provided
 if [ -n "${SYSROOT}" ]; then
