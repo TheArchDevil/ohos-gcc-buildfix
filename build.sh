@@ -878,6 +878,39 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# Normalize all path arguments to absolute form
+# This allows users to specify relative paths like ./install
+
+# Normalize install prefix to absolute form
+if [ -n "${INSTALL_PREFIX}" ]; then
+    # For paths that don't exist yet, we need to handle differently
+    # Use realpath with -m to allow non-existent paths
+    if command -v realpath >/dev/null 2>&1; then
+        INSTALL_PREFIX=$(realpath -m "${INSTALL_PREFIX}")
+    else
+        # Fallback: convert relative to absolute manually
+        case "${INSTALL_PREFIX}" in
+            /*) ;; # Already absolute
+            *)  INSTALL_PREFIX="${PWD}/${INSTALL_PREFIX}" ;;
+        esac
+    fi
+fi
+
+# Also normalize BINUTILS_INSTALL_PREFIX if it was set explicitly
+# Otherwise it inherits from INSTALL_PREFIX
+if [ "${BINUTILS_INSTALL_PREFIX}" != "${INSTALL_PREFIX}" ] && [ -n "${BINUTILS_INSTALL_PREFIX}" ]; then
+    if command -v realpath >/dev/null 2>&1; then
+        BINUTILS_INSTALL_PREFIX=$(realpath -m "${BINUTILS_INSTALL_PREFIX}")
+    else
+        case "${BINUTILS_INSTALL_PREFIX}" in
+            /*) ;;
+            *)  BINUTILS_INSTALL_PREFIX="${PWD}/${BINUTILS_INSTALL_PREFIX}" ;;
+        esac
+    fi
+else
+    BINUTILS_INSTALL_PREFIX="${INSTALL_PREFIX}"
+fi
+
 # Normalize stage1 prefix to absolute form if provided
 if [ -n "${STAGE1_PREFIX}" ]; then
     if ! resolved_stage1=$(readlink -f "${STAGE1_PREFIX}"); then
