@@ -1,222 +1,262 @@
 # GCC for OpenHarmony (OHOS)
 
-OpenHarmony 的 GCC 交叉编译工具链构建脚本，基于 Alpine Linux 的 GCC APKBUILD 改编。
+OpenHarmony 的 GCC 工具链构建脚本，支持交叉编译器和原生编译器的完整三阶段构建。
 
-> 进展：施工中
+[![CI Build](https://github.com/sanchuanhehe/ohos-gcc/actions/workflows/build.yml/badge.svg)](https://github.com/sanchuanhehe/ohos-gcc/actions/workflows/build.yml)
 
 ## 项目简介
 
-本项目提供了一个完整的构建脚本，用于为 OpenHarmony (OHOS) 操作系统编译 GCC 交叉编译工具链。支持多种目标架构，包括 AArch64、ARM、x86/x86_64、RISC-V 和 MIPS。
+本项目提供完整的构建脚本，用于为 OpenHarmony (OHOS) 操作系统编译 GCC 工具链。支持：
+
+- **Stage 1**: 交叉编译器（在 Linux 上运行，生成 OHOS 代码）
+- **Stage 2**: 原生编译器（Canadian Cross，在 OHOS 上运行）
+- **Stage 3**: 原生自举（在 OHOS 设备上重新编译自身）
 
 ### 主要特性
 
-- ✅ 基于 GCC 15.2.0
-- ✅ 支持多架构（AArch64、ARM、x86/x86_64、RISC-V、MIPS）
+- ✅ GCC 15.2.0 + Binutils 2.43
+- ✅ 多架构支持（AArch64、x86_64、ARM、RISC-V、MIPS）
 - ✅ 使用 musl libc
-- ✅ 包含 OHOS 特定补丁和优化
 - ✅ 默认启用安全特性（PIE、SSP）
-- ✅ 灵活的构建配置
-- ✅ 完整的文档和示例
+- ✅ 支持 Canadian Cross 构建原生 OHOS 编译器
+- ✅ 自动下载 NDK sysroot
+- ✅ GitHub Actions CI/CD
 
 ## 快速开始
 
-### 1. 安装依赖
+### 安装依赖
 
 ```bash
 # Ubuntu/Debian
-sudo apt-get install -y build-essential bison flex texinfo gawk zip \
-    libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev wget
+sudo apt-get install -y build-essential bison flex texinfo gawk zip unzip \
+    libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev wget git
 
 # Fedora/RHEL
-sudo dnf install -y gcc gcc-c++ bison flex texinfo gawk zip \
-    gmp-devel mpfr-devel libmpc-devel zlib-devel wget
+sudo dnf install -y gcc gcc-c++ bison flex texinfo gawk zip unzip \
+    gmp-devel mpfr-devel libmpc-devel zlib-devel wget git
 ```
 
-### 2. 构建工具链
-
-#### 使用交互式示例脚本（推荐）
+### Stage 1: 构建交叉编译器
 
 ```bash
-./build-examples.sh
+# AArch64 交叉编译器（推荐）
+./build.sh --target=aarch64-linux-ohos --prefix=./install all
+
+# x86_64 交叉编译器
+./build.sh --target=x86_64-linux-ohos --prefix=./install all
 ```
 
-#### 手动构建
+### Stage 2: 构建原生 OHOS 编译器（Canadian Cross）
 
 ```bash
-# AArch64 (推荐用于 OHOS 设备)
-./build.sh --target=aarch64-linux-ohos --prefix=/opt/ohos-gcc
-
-# ARM 32位
-./build.sh --target=arm-linux-ohos --prefix=/opt/ohos-gcc-arm
-
-# x86_64
-./build.sh --target=x86_64-linux-ohos --prefix=/opt/ohos-gcc-x86_64
-
-# RISC-V 64位
-./build.sh --target=riscv64-linux-ohos --prefix=/opt/ohos-gcc-riscv64
+# 需要先完成 Stage 1
+./build.sh \
+    --build=x86_64-linux-gnu \
+    --host=aarch64-linux-ohos \
+    --target=aarch64-linux-ohos \
+    --stage1=./install \
+    --prefix=./install-stage2 \
+    all
 ```
 
-### 3. 测试工具链
+### 测试工具链
 
 ```bash
-# 测试已安装的工具链
-./test-toolchain.sh /opt/ohos-gcc aarch64-linux-ohos
+# 测试交叉编译器
+./test-toolchain.sh ./install aarch64-linux-ohos
+
+# 简单测试
+./install/bin/aarch64-linux-ohos-gcc --version
 ```
 
-### 4. 使用工具链
+## 构建类型详解
+
+### Stage 1: 交叉编译器
+
+在 Linux 主机上运行，生成 OHOS 目标代码：
+
+```
+CBUILD = CHOST = x86_64-linux-gnu (构建机器)
+CTARGET = aarch64-linux-ohos (目标平台)
+```
 
 ```bash
-# 添加到 PATH
-export PATH=/opt/ohos-gcc/bin:$PATH
-
-# 编译示例程序
-cat > hello.c << 'EOF'
-#include <stdio.h>
-int main() {
-    printf("Hello, OpenHarmony!\n");
-    return 0;
-}
-EOF
-
-aarch64-linux-ohos-gcc -o hello hello.c
+./build.sh --target=aarch64-linux-ohos --prefix=/opt/ohos-gcc-stage1 all
 ```
 
-## 文档
+### Stage 2: Canadian Cross（原生编译器）
 
-- [**BUILD_OHOS.md**](BUILD_OHOS.md) - 完整的构建指南和文档
-- [**CONTRIBUTING.md**](CONTRIBUTING.md) - 贡献指南
+使用 Stage 1 交叉编译器构建，生成在 OHOS 上运行的原生编译器：
+
+```
+CBUILD = x86_64-linux-gnu (构建机器)
+CHOST = CTARGET = aarch64-linux-ohos (目标平台)
+```
+
+```bash
+./build.sh \
+    --build=x86_64-linux-gnu \
+    --host=aarch64-linux-ohos \
+    --target=aarch64-linux-ohos \
+    --stage1=/opt/ohos-gcc-stage1 \
+    --prefix=/opt/ohos-gcc-stage2 \
+    all
+```
+
+### Stage 3: 原生自举
+
+在 OHOS 设备上使用 Stage 2 编译器重新编译自身：
+
+```
+CBUILD = CHOST = CTARGET = aarch64-linux-ohos
+```
+
+```bash
+# 在 OHOS 设备上运行
+./build.sh \
+    --build=aarch64-linux-ohos \
+    --host=aarch64-linux-ohos \
+    --target=aarch64-linux-ohos \
+    --stage2=/opt/ohos-gcc-stage2 \
+    --prefix=/opt/ohos-gcc \
+    all
+```
+
+## 支持的目标架构
+
+| 架构 | 目标三元组 | Stage 1 | Stage 2 | 说明 |
+|------|-----------|:-------:|:-------:|------|
+| AArch64 | `aarch64-linux-ohos` | ✅ | ✅ | ARM 64位（推荐） |
+| x86_64 | `x86_64-linux-ohos` | ✅ | ✅ | Intel/AMD 64位 |
+| ARM | `arm-linux-ohos` | ✅ | 🔄 | ARM 32位软浮点 |
+| ARM HF | `armhf-linux-ohos` | ✅ | 🔄 | ARM 32位硬浮点 |
+| RISC-V | `riscv64-linux-ohos` | ✅ | 🔄 | RISC-V 64位 |
+
+## 命令参考
+
+### 构建命令
+
+```bash
+./build.sh [选项] [命令]
+
+命令:
+  prepare_ndk      下载并设置 NDK sysroot
+  prepare          准备所有源码（NDK + binutils + GCC）
+  binutils         仅构建 binutils
+  configure        配置 GCC
+  build            编译 GCC
+  install          安装 GCC
+  all              完整构建流程（默认）
+  clean            清理构建目录
+```
+
+### 选项
+
+| 选项 | 说明 | 默认值 |
+|------|------|--------|
+| `--target=TARGET` | 目标三元组 | `aarch64-linux-ohos` |
+| `--host=HOST` | 主机三元组 | 自动检测 |
+| `--build=BUILD` | 构建机器三元组 | 自动检测 |
+| `--prefix=PATH` | 安装路径 | `./install` |
+| `--sysroot=PATH` | Sysroot 路径 | `ndk/sysroot/TARGET` |
+| `--stage1=PATH` | Stage 1 安装路径（Stage 2 需要） | - |
+| `--stage2=PATH` | Stage 2 安装路径（Stage 3 需要） | - |
+| `--jobs=N` | 并行任务数 | `$(nproc)` |
+| `--enable-languages=LIST` | 启用的语言 | `c,c++` |
 
 ## 项目结构
 
 ```
 ohos-gcc/
-├── build.sh                  # 主构建脚本
-├── build-examples.sh         # 交互式示例脚本
-├── test-toolchain.sh         # 工具链测试脚本
-├── BUILD_OHOS.md            # 详细构建文档
-├── README.md                # 本文件
-├── patches/                 # GCC 补丁
-│   ├── 0001-Add-OpenHarmony-OHOS-*.patch  # OHOS 支持补丁
-│   └── 00*.patch            # Alpine Linux 补丁系列
-└── gcc-15.2.0/              # GCC 源码（自动下载）
+├── build.sh                 # 主构建脚本
+├── build-examples.sh        # 交互式示例脚本
+├── test-toolchain.sh        # 工具链测试脚本
+├── BUILD_OHOS.md           # 详细构建文档
+├── CONTRIBUTING.md         # 贡献指南
+├── gcc-patches/            # GCC 补丁
+│   └── 0001-Add-OpenHarmony-OHOS-*.patch
+├── binutils-patches/       # Binutils 补丁
+├── gmp-patches/            # GMP 补丁（OHOS 支持）
+├── mpfr-patches/           # MPFR 补丁
+├── mpc-patches/            # MPC 补丁
+├── isl-patches/            # ISL 补丁
+├── gettext-patches/        # gettext 补丁
+├── sysroot-patches/        # Sysroot 补丁
+├── ndk/                    # NDK sysroot（自动下载）
+├── gcc-15.2.0/             # GCC 源码（自动下载）
+└── binutils-2.43/          # Binutils 源码（自动下载）
 ```
 
-## 支持的目标架构
+## 环境变量
 
-| 架构 | 目标三元组 | 说明 |
-|------|-----------|------|
-| AArch64 | `aarch64-linux-ohos` | ARM 64位（推荐） |
-| ARM | `arm-linux-ohos` | ARM 32位软浮点 |
-| ARM HF | `armhf-linux-ohos` | ARM 32位硬浮点 |
-| x86_64 | `x86_64-linux-ohos` | Intel/AMD 64位 |
-| x86 | `i686-linux-ohos` | Intel/AMD 32位 |
-| RISC-V | `riscv64-linux-ohos` | RISC-V 64位 |
-| MIPS | `mips*-linux-ohos` | MIPS 32/64位 |
-
-## 高级用法
-
-### 指定 Sysroot
-
-```bash
-./build.sh \
-    --target=aarch64-linux-ohos \
-    --prefix=/opt/ohos-gcc \
-    --sysroot=/path/to/ohos-sysroot
-```
-
-### 自定义语言支持
-
-```bash
-# 仅 C 和 C++
-./build.sh --enable-languages=c,c++
-
-# 添加 Fortran
-./build.sh --enable-languages=c,c++,fortran
-```
-
-### 并行构建
-
-```bash
-# 使用 8 个并行任务
-./build.sh --jobs=8
-```
-
-### 分步构建
-
-```bash
-./build.sh prepare    # 准备源码和补丁
-./build.sh configure  # 配置构建
-./build.sh build      # 编译
-./build.sh install    # 安装
-./build.sh clean      # 清理
-```
-
-## 补丁说明
-
-### OHOS 补丁
-
-`0001-Add-OpenHarmony-OHOS-target-support-to-GCC.patch` 添加了对 OpenHarmony 的全面支持：
-
-- OHOS 目标识别（config.sub）
-- 多架构配置（config.gcc）
-- 动态链接器路径
-- musl libc 集成
-- 架构特定头文件和库路径
-
-### Alpine Linux 补丁
-
-来自 Alpine Linux 的补丁系列，包括：
-
-- 安全加固（PIE、SSP、FORTIFY_SOURCE）
-- musl libc 兼容性修复
-- 各种 bug 修复和优化
+| 变量 | 说明 |
+|------|------|
+| `CTARGET` | 目标三元组 |
+| `CHOST` | 主机三元组 |
+| `CBUILD` | 构建机器三元组 |
+| `INSTALL_PREFIX` | 安装路径 |
+| `STAGE1_PREFIX` | Stage 1 路径 |
+| `STAGE2_PREFIX` | Stage 2 路径 |
+| `SYSROOT` | Sysroot 路径 |
+| `NDK_URL` | NDK 下载地址 |
+| `JOBS` | 并行任务数 |
 
 ## 常见问题
 
-### Q: 构建失败怎么办？
+### Q: Stage 2 构建失败，提示找不到编译器？
 
-A: 请检查：
-1. 是否安装了所有依赖
-2. 磁盘空间是否充足（至少需要 10GB）
-3. 查看 BUILD_OHOS.md 中的故障排除部分
+A: 确保：
+1. Stage 1 已成功构建
+2. `--stage1` 路径正确指向 Stage 1 安装目录
+3. 如果重新构建，先清理目标目录：`rm -rf install-stage2 build-ohos build-binutils`
 
-### Q: 如何交叉编译程序？
+### Q: 构建需要多长时间？
 
-A: 使用 `--sysroot` 参数指定目标系统的根文件系统：
+| 配置 | Stage 1 | Stage 2 |
+|------|---------|---------|
+| 8 核 CPU | ~30-60 分钟 | ~45-90 分钟 |
+| 16 核 CPU | ~15-30 分钟 | ~25-45 分钟 |
+
+### Q: 如何使用编译好的工具链？
 
 ```bash
-aarch64-linux-ohos-gcc \
-    --sysroot=/path/to/ohos-sysroot \
-    -o myprogram \
-    myprogram.c
+# Stage 1 交叉编译
+export PATH=/opt/ohos-gcc-stage1/bin:$PATH
+aarch64-linux-ohos-gcc -o hello hello.c
+
+# 查看目标信息
+aarch64-linux-ohos-gcc -v
 ```
 
 ### Q: 支持哪些语言？
 
-A: 默认支持 C 和 C++。可以通过 `--enable-languages` 参数启用其他语言（Fortran、Go、D、Ada、Objective-C）。
+默认支持 C 和 C++。可通过 `--enable-languages` 启用其他语言：
+- `c,c++` (默认)
+- `c,c++,fortran`
+- `c,c++,go`
 
-### Q: 编译时间多长？
+## CI/CD
 
-A: 取决于硬件配置和启用的语言。在现代 8 核处理器上：
-- C/C++ only: 约 30-60 分钟
-- 所有语言: 约 2-3 小时
+本项目使用 GitHub Actions 进行持续集成：
+
+- **Stage 1**: 为 aarch64 和 x86_64 构建交叉编译器
+- **Stage 2**: 使用 Canadian Cross 构建原生编译器
+- **Artifacts**: 构建产物可从 Actions 页面下载
 
 ## 贡献
 
-欢迎大家参与贡献！目前已经完成了 sysroot 的适配和部分其它部分的简单适配，欢迎提交 PR。
-
-详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 
 - GCC: GPL-3.0
-- 本项目构建脚本: GPL-3.0
-- OHOS 补丁: 与 GCC 相同的许可证
+- Binutils: GPL-3.0
+- 本项目脚本: GPL-3.0
 
 ## 致谢
 
-- [Alpine Linux](https://alpinelinux.org/) - APKBUILD 脚本基础
-- [GCC Project](https://gcc.gnu.org/) - 编译器本身
+- [Alpine Linux](https://alpinelinux.org/) - 构建脚本参考
+- [GCC Project](https://gcc.gnu.org/) - 编译器
 - [OpenHarmony](https://www.openharmony.cn/) - 目标操作系统
 - [musl libc](https://musl.libc.org/) - C 标准库
 
@@ -224,10 +264,8 @@ A: 取决于硬件配置和启用的语言。在现代 8 核处理器上：
 
 - [OpenHarmony 官网](https://www.openharmony.cn/)
 - [GCC 官方文档](https://gcc.gnu.org/onlinedocs/)
-- [Alpine Linux GCC](https://git.alpinelinux.org/aports/tree/main/gcc)
-- [musl libc](https://musl.libc.org/)
+- [Binutils 文档](https://sourceware.org/binutils/docs/)
 
 ---
 
-**注意**: 这是一个社区项目，与 OpenHarmony 官方无关。如有问题请通过 Issue 反馈。
-
+**注意**: 这是一个社区项目，与 OpenHarmony 官方无关。
