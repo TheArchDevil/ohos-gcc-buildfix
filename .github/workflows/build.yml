@@ -271,11 +271,10 @@ jobs:
         run: |
           chmod +x install/bin/*
           chmod +x install/libexec/gcc/${{ matrix.target }}/*/* || true
-
-      - name: Prepare sources for Canadian Cross
-        run: |
-          chmod +x build.sh
-          ./build.sh --target=${{ matrix.target }} prepare
+          # Add stage 1 to PATH and verify
+          export PATH="${PWD}/install/bin:${PATH}"
+          echo "Stage 1 GCC version:"
+          ${{ matrix.target }}-gcc --version
 
       - name: Build Canadian Cross (Stage 2)
         run: |
