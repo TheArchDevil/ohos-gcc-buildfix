@@ -830,10 +830,13 @@ configure_gcc() {
     # Use --with-build-time-tools to specify stage 1 tools for running on build machine
     local host_pie_configure=""
     local build_time_tools=""
+    local isl_configure=""
     if is_canadian_cross; then
         zlib_configure=""
         host_pie_configure="--enable-host-pie"
         build_time_tools="--with-build-time-tools=${STAGE1_PREFIX}/bin"
+        # Disable ISL version check - tests won't run in cross environment anyway
+        isl_configure="--disable-isl-version-check"
         msg "Canadian Cross: Using bundled zlib, enabling host PIE, and using stage 1 build-time tools"
     fi
 
@@ -911,6 +914,7 @@ configure_gcc() {
             ${zlib_configure} \
             ${host_pie_configure} \
             ${build_time_tools} \
+            ${isl_configure} \
             --enable-checking=release \
             --enable-languages="${LANGUAGES}" \
             --enable-__cxa_atexit \
