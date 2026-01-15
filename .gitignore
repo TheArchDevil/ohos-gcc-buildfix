@@ -8,3 +8,4 @@ build.log
 ndk-llvm.tar.gz
 x86_64-linux-ohos-gcc-15.2.0.tar.gz
 install*
+*.log
