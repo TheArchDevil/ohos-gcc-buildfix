@@ -297,8 +297,16 @@ setup_canadian_cross_env() {
 
     # Build tools - must run on the BUILD machine, not the HOST
     # These are native compilers that build tools that run during compilation
-    export CC_FOR_BUILD="gcc"
-    export CXX_FOR_BUILD="g++"
+    # Use the triplet-prefixed version (e.g., x86_64-linux-gnu-gcc) for consistency
+    # with how GCC's build system auto-detects these in Stage 1 builds.
+    # Fall back to plain gcc/g++ if triplet-prefixed version doesn't exist.
+    if command -v "${CBUILD}-gcc" >/dev/null 2>&1; then
+        export CC_FOR_BUILD="${CBUILD}-gcc"
+        export CXX_FOR_BUILD="${CBUILD}-g++"
+    else
+        export CC_FOR_BUILD="gcc"
+        export CXX_FOR_BUILD="g++"
+    fi
     export CFLAGS_FOR_BUILD="-g -O2"
     export CXXFLAGS_FOR_BUILD="-g -O2"
     export LDFLAGS_FOR_BUILD=""
@@ -497,8 +505,9 @@ build_binutils() {
     "${configure_args[@]}" || error "Binutils configuration failed"
 
     # Pass CC_FOR_BUILD explicitly to make for Canadian Cross
+    # Use the exported CC_FOR_BUILD which is set in setup_canadian_cross_env()
     if is_canadian_cross; then
-        make -j"${JOBS}" MAKEINFO=true CC_FOR_BUILD="gcc" CXX_FOR_BUILD="g++" \
+        make -j"${JOBS}" MAKEINFO=true CC_FOR_BUILD="${CC_FOR_BUILD}" CXX_FOR_BUILD="${CXX_FOR_BUILD}" \
             || error "Binutils build failed"
     else
         make -j"${JOBS}" MAKEINFO=true || error "Binutils build failed"
@@ -843,6 +852,13 @@ configure_gcc() {
         # GCC's configure checks for C++14 support via compilation test only
         # but some sub-configures may try to run test programs
         export gcc_cv_prog_cxx_stdcxx='cxx14'
+        
+        # Also set the cache variables for the BUILD compiler (g++)
+        # GCC configure also checks if the build system's compiler supports C++14
+        # These are separate from the HOST compiler checks above
+        export ax_cv_cxx_compile_cxx14_FOR_BUILD='yes'
+        export ac_cv_prog_cxx_g_FOR_BUILD='yes'
+        
         msg "Canadian Cross: Set C++14 cache variables to bypass runtime tests"
     fi
     
