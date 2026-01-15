@@ -512,6 +512,13 @@ build_binutils() {
         "--with-pkgversion=OHOS Binutils ${BINUTILS_VERSION}"
     )
 
+    # For cross-compiler builds (Stage 1), disable installation of unprefixed tools
+    # to avoid polluting the install directory with tools that could conflict
+    # with system tools. Only install ${CTARGET}-prefixed tools.
+    if [ "${CHOST}" = "${CBUILD}" ] && [ "${CTARGET}" != "${CBUILD}" ]; then
+        configure_args+=("--program-prefix=${CTARGET}-")
+    fi
+
     if [ -n "${SYSROOT}" ]; then
         configure_args+=("--with-sysroot=${SYSROOT}")
     fi
