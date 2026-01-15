@@ -17,6 +17,10 @@ on:
         description: 'Target triplet (e.g., x86_64-linux-ohos)'
         required: false
         default: 'x86_64-linux-ohos'
+      build_native:
+        description: 'Build native OHOS compiler (Canadian Cross)'
+        required: false
+        default: 'true'
       debug:
         description: 'Enable debug mode'
         required: false
@@ -25,11 +29,13 @@ on:
 env:
   # NDK download URL - update this when new versions are released
   NDK_URL: 'https://cidownload.openharmony.cn/version/Daily_Version/LLVM-19/20260114_061434/version-Daily_Version-LLVM-19-20260114_061434-LLVM-19.tar.gz'
+  GCC_VERSION: '15.2.0'
+  BINUTILS_VERSION: '2.43'
 
 jobs:
-  # Build matrix for multiple architectures
-  build:
-    name: Build ${{ matrix.target }}
+  # Stage 1: Build cross-compiler (runs on Linux, compiles for OHOS)
+  build-cross:
+    name: Stage 1 - Cross Compiler ${{ matrix.target }}
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     
@@ -44,6 +50,10 @@ jobs:
             arch: x86_64
           - target: aarch64-linux-ohos
             arch: aarch64
+
+    outputs:
+      x86_64-success: ${{ steps.verify.outputs.x86_64-success }}
+      aarch64-success: ${{ steps.verify.outputs.aarch64-success }}
 
     steps:
       - name: Checkout repository
@@ -127,6 +137,7 @@ jobs:
           ./build.sh --target=${{ matrix.target }} install
 
       - name: Verify toolchain
+        id: verify
         run: |
           echo "=== Toolchain verification ==="
           export PATH="${PWD}/install/bin:${PATH}"
@@ -155,10 +166,17 @@ jobs:
           file test_cpp.o
           
           echo "=== Verification completed ==="
+          
+          # Set output for dependent jobs
+          if [[ "${{ matrix.target }}" == "x86_64-linux-ohos" ]]; then
+            echo "x86_64-success=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.target }}" == "aarch64-linux-ohos" ]]; then
+            echo "aarch64-success=true" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Package toolchain
+      - name: Package cross-compiler toolchain
         run: |
-          PACKAGE_NAME="gcc-ohos-${{ matrix.target }}"
+          PACKAGE_NAME="gcc-${{ env.GCC_VERSION }}-cross-${{ matrix.target }}"
           mkdir -p artifacts
           tar -cJf "artifacts/${PACKAGE_NAME}.tar.xz" -C install .
           
@@ -166,12 +184,159 @@ jobs:
           cd artifacts
           sha256sum "${PACKAGE_NAME}.tar.xz" > "${PACKAGE_NAME}.tar.xz.sha256"
 
-      - name: Upload toolchain artifact
+      - name: Upload cross-compiler artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gcc-ohos-${{ matrix.target }}
+          name: gcc-cross-${{ matrix.target }}
           path: artifacts/
-          retention-days: 7
+          retention-days: 30
+
+      - name: Upload stage 1 install for Canadian Cross
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage1-${{ matrix.target }}
+          path: install/
+          retention-days: 1
+
+  # Stage 2: Build native OHOS compiler (Canadian Cross)
+  build-native:
+    name: Stage 2 - Native OHOS Compiler ${{ matrix.target }}
+    needs: build-cross
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    # Build native compiler unless explicitly disabled via workflow_dispatch
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_native != 'false' }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-ohos
+          - aarch64-linux-ohos
+        include:
+          - target: x86_64-linux-ohos
+            arch: x86_64
+          - target: aarch64-linux-ohos
+            arch: aarch64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          
+          # Remove unnecessary large packages
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /opt/hostedtoolcache/go
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc g++ \
+            make \
+            flex bison \
+            texinfo \
+            libgmp-dev \
+            libmpfr-dev \
+            libmpc-dev \
+            libisl-dev \
+            zlib1g-dev \
+            libzstd-dev \
+            wget curl \
+            tar xz-utils \
+            file \
+            python3 \
+            autoconf automake libtool \
+            pkg-config
+
+      - name: Download stage 1 cross-compiler
+        uses: actions/download-artifact@v4
+        with:
+          name: stage1-${{ matrix.target }}
+          path: install/
+
+      - name: Make stage 1 tools executable
+        run: |
+          chmod +x install/bin/*
+          chmod +x install/libexec/gcc/${{ matrix.target }}/*/* || true
+
+      - name: Prepare sources for Canadian Cross
+        run: |
+          chmod +x build.sh
+          ./build.sh --target=${{ matrix.target }} prepare
+
+      - name: Build Canadian Cross (Stage 2)
+        run: |
+          echo "=== Building native OHOS compiler (Canadian Cross) ==="
+          ./build.sh \
+            --build=x86_64-linux-gnu \
+            --host=${{ matrix.target }} \
+            --target=${{ matrix.target }} \
+            --stage1=./install \
+            --prefix=./install-stage2 \
+            --jobs=$(nproc) \
+            all
+
+      - name: Verify native compiler binaries
+        run: |
+          echo "=== Verifying native OHOS compiler ==="
+          
+          # Check that binaries are OHOS format
+          echo "--- Binary format check ---"
+          file ./install-stage2/bin/gcc
+          file ./install-stage2/bin/g++
+          
+          # Verify interpreter is musl
+          echo "--- Interpreter check ---"
+          readelf -p .interp ./install-stage2/bin/gcc || true
+          
+          # List installed files
+          echo "--- Installed binaries ---"
+          ls -la ./install-stage2/bin/
+          
+          echo "=== Verification completed ==="
+
+      - name: Package native OHOS compiler
+        run: |
+          PACKAGE_NAME="gcc-${{ env.GCC_VERSION }}-native-${{ matrix.target }}"
+          mkdir -p artifacts
+          
+          # Create tarball
+          tar -cJf "artifacts/${PACKAGE_NAME}.tar.xz" -C install-stage2 .
+          
+          # Generate checksums
+          cd artifacts
+          sha256sum "${PACKAGE_NAME}.tar.xz" > "${PACKAGE_NAME}.tar.xz.sha256"
+          
+          # Create info file
+          cat > "${PACKAGE_NAME}.info" << EOF
+          Package: GCC Native Compiler for OpenHarmony
+          GCC Version: ${{ env.GCC_VERSION }}
+          Binutils Version: ${{ env.BINUTILS_VERSION }}
+          Target: ${{ matrix.target }}
+          Build Type: Canadian Cross (Stage 2)
+          Build Date: $(date -u +%Y-%m-%d)
+          Description: Native GCC compiler that runs on OHOS and compiles for OHOS
+          EOF
+
+      - name: Upload native compiler artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcc-native-${{ matrix.target }}
+          path: artifacts/
+          retention-days: 30
 
   # Quick syntax and patch validation (runs faster than full build)
   validate:
@@ -211,7 +376,7 @@ jobs:
   # Create release when tagged
   release:
     name: Create Release
-    needs: build
+    needs: [build-cross, build-native]
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     
@@ -220,14 +385,54 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: gcc-*
           merge-multiple: true
+
+      - name: List release files
+        run: |
+          echo "=== Release files ==="
+          ls -la artifacts/
+          echo "=== Checksums ==="
+          cat artifacts/*.sha256 || true
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/*
+          files: |
+            artifacts/*.tar.xz
+            artifacts/*.sha256
+            artifacts/*.info
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
           generate_release_notes: true
+          body: |
+            ## GCC ${{ env.GCC_VERSION }} for OpenHarmony
+            
+            This release includes:
+            - **Cross-compilers**: Run on Linux, compile for OHOS
+            - **Native compilers**: Run on OHOS, compile for OHOS (Canadian Cross build)
+            
+            ### Packages
+            
+            | Package | Description |
+            |---------|-------------|
+            | `gcc-*-cross-*.tar.xz` | Cross-compiler (Linux host) |
+            | `gcc-*-native-*.tar.xz` | Native compiler (OHOS host) |
+            
+            ### Supported Targets
+            - `x86_64-linux-ohos` (x86_64)
+            - `aarch64-linux-ohos` (ARM64)
+            
+            ### Installation
+            
+            ```bash
+            # Cross-compiler (on Linux)
+            tar -xJf gcc-*-cross-x86_64-linux-ohos.tar.xz -C /opt/ohos-gcc
+            export PATH=/opt/ohos-gcc/bin:$PATH
+            
+            # Native compiler (on OHOS device)
+            tar -xJf gcc-*-native-x86_64-linux-ohos.tar.xz -C /opt/gcc
+            export PATH=/opt/gcc/bin:$PATH
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

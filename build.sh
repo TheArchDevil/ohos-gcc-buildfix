@@ -1260,6 +1260,9 @@ Please run 'prepare' or download GCC source first."
         ;;
     all)
         prepare_ndk
+        prepare_binutils
+        apply_sysroot_patches
+        prepare_gcc
         build_binutils
         configure_gcc
         build_gcc
