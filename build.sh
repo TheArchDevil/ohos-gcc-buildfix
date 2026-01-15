@@ -303,12 +303,29 @@ setup_canadian_cross_env() {
     # variable during parallel configure runs.
     #
     # We set these as shell variables for use in both binutils build and GCC configure.
-    CC_FOR_BUILD="${CBUILD}-gcc"
-    CXX_FOR_BUILD="${CBUILD}-g++"
-    if ! command -v "${CC_FOR_BUILD}" >/dev/null 2>&1; then
-        CC_FOR_BUILD="gcc"
-        CXX_FOR_BUILD="g++"
+    # Note: We need to find the native toolchain path to ensure CC_FOR_BUILD can
+    # properly link executables. When PATH is modified to include cross tools,
+    # the native compiler's collect2 might find the wrong linker.
+    local native_bindir="/usr/bin"
+    if [[ -x "/usr/bin/${CBUILD}-gcc" ]]; then
+        CC_FOR_BUILD="/usr/bin/${CBUILD}-gcc"
+        CXX_FOR_BUILD="/usr/bin/${CBUILD}-g++"
+    elif [[ -x "/usr/bin/gcc" ]]; then
+        CC_FOR_BUILD="/usr/bin/gcc"
+        CXX_FOR_BUILD="/usr/bin/g++"
+    else
+        CC_FOR_BUILD="${CBUILD}-gcc"
+        CXX_FOR_BUILD="${CBUILD}-g++"
+        if ! command -v "${CC_FOR_BUILD}" >/dev/null 2>&1; then
+            CC_FOR_BUILD="gcc"
+            CXX_FOR_BUILD="g++"
+        fi
     fi
+    # Add -B flag to tell the compiler where to find the native binutils (ld, as, etc.)
+    # This is critical for Canadian Cross builds where PATH is modified to include
+    # cross-compiler tools, which could confuse collect2's linker search.
+    CC_FOR_BUILD="${CC_FOR_BUILD} -B${native_bindir}"
+    CXX_FOR_BUILD="${CXX_FOR_BUILD} -B${native_bindir}"
     # Only export the flags, not the compiler commands
     export CFLAGS_FOR_BUILD="-g -O2"
     export CXXFLAGS_FOR_BUILD="-g -O2"
