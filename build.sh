@@ -989,47 +989,48 @@ configure_gcc() {
     # as environment variables. GMP's configure uses $CC_FOR_BUILD directly without
     # CFLAGS_FOR_BUILD, so we must include -B option in CC_FOR_BUILD itself.
     # We use a subshell with export to avoid polluting the parent shell.
-    if is_canadian_cross; then
-        # Export CC_FOR_BUILD with -B option to ensure GMP configure can link
-        export CC_FOR_BUILD="${CC_FOR_BUILD} -B/usr/bin"
-        export CXX_FOR_BUILD="${CXX_FOR_BUILD} -B/usr/bin"
-    fi
-    
-    "${SOURCE_DIR}/configure" \
-        --prefix="${INSTALL_PREFIX}" \
-        --mandir="${INSTALL_PREFIX}/share/man" \
-        --infodir="${INSTALL_PREFIX}/share/info" \
-        --build="${CBUILD}" \
-        --host="${CHOST}" \
-        --target="${CTARGET}" \
-        --with-pkgversion="OHOS GCC ${GCC_VERSION}" \
-        --with-bugurl="https://github.com/sanchuanhehe/ohos-gcc" \
-        ${zlib_configure} \
-        ${host_pie_configure} \
-        ${build_time_tools} \
-        --enable-checking=release \
-        --enable-languages="${LANGUAGES}" \
-        --enable-__cxa_atexit \
-        --enable-default-pie \
-        --enable-default-ssp \
-        --enable-linker-build-id \
-        --enable-link-serialization=2 \
-        --disable-cet \
-        --disable-fixed-point \
-        --disable-libstdcxx-pch \
-        --disable-multilib \
-        --disable-nls \
-        --disable-werror \
-        --disable-symvers \
-        --disable-libssp \
-        ${ARCH_CONFIGURE} \
-        ${SANITIZER_CONFIGURE} \
-        "${cross_configure[@]}" \
-        ${BOOTSTRAP_CONFIGURE} \
-        ${HASH_STYLE_CONFIGURE} \
-        ${extra_binutils_flags} \
-        ${EXTRA_CONFIGURE_FLAGS:-} \
-        || error "Configuration failed"
+    (
+        # 如果是 Canadian Cross，在子shell中临时设置环境变量
+        if is_canadian_cross; then
+            export CC_FOR_BUILD="${CC_FOR_BUILD} -B/usr/bin"
+            export CXX_FOR_BUILD="${CXX_FOR_BUILD} -B/usr/bin"
+        fi
+
+        "${SOURCE_DIR}/configure" \
+            --prefix="${INSTALL_PREFIX}" \
+            --mandir="${INSTALL_PREFIX}/share/man" \
+            --infodir="${INSTALL_PREFIX}/share/info" \
+            --build="${CBUILD}" \
+            --host="${CHOST}" \
+            --target="${CTARGET}" \
+            --with-pkgversion="OHOS GCC ${GCC_VERSION}" \
+            --with-bugurl="https://github.com/sanchuanhehe/ohos-gcc" \
+            ${zlib_configure} \
+            ${host_pie_configure} \
+            ${build_time_tools} \
+            --enable-checking=release \
+            --enable-languages="${LANGUAGES}" \
+            --enable-__cxa_atexit \
+            --enable-default-pie \
+            --enable-default-ssp \
+            --enable-linker-build-id \
+            --enable-link-serialization=2 \
+            --disable-cet \
+            --disable-fixed-point \
+            --disable-libstdcxx-pch \
+            --disable-multilib \
+            --disable-nls \
+            --disable-werror \
+            --disable-symvers \
+            --disable-libssp \
+            ${ARCH_CONFIGURE} \
+            ${SANITIZER_CONFIGURE} \
+            "${cross_configure[@]}" \
+            ${BOOTSTRAP_CONFIGURE} \
+            ${HASH_STYLE_CONFIGURE} \
+            ${extra_binutils_flags} \
+            ${EXTRA_CONFIGURE_FLAGS:-}
+    ) || error "Configuration failed"
 }
 
 build_gcc() {
