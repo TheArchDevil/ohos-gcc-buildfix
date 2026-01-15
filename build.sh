@@ -276,17 +276,21 @@ setup_canadian_cross_env() {
     export CXXFLAGS="${CXXFLAGS:--g -O2}"
     export LDFLAGS="${LDFLAGS:-}"
 
-    # For native OHOS build, target tools are the same as host tools
+    # For Canadian Cross build, target tools must be the stage 1 cross-compiler
+    # because it can run on the BUILD machine and generate code for TARGET.
+    # The newly built compiler (xgcc) cannot run on BUILD machine.
     export CC_FOR_TARGET="${CC}"
     export CXX_FOR_TARGET="${CXX}"
-    export AR_FOR_TARGET="${AR}"
-    export AS_FOR_TARGET="${AS}"
-    export LD_FOR_TARGET="${LD}"
-    export NM_FOR_TARGET="${NM}"
-    export RANLIB_FOR_TARGET="${RANLIB}"
-    export STRIP_FOR_TARGET="${STRIP}"
-    export OBJCOPY_FOR_TARGET="${OBJCOPY}"
-    export OBJDUMP_FOR_TARGET="${OBJDUMP}"
+    export GCC_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-gcc"
+    export GXX_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-g++"
+    export AR_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-ar"
+    export AS_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-as"
+    export LD_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-ld"
+    export NM_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-nm"
+    export RANLIB_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-ranlib"
+    export STRIP_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-strip"
+    export OBJCOPY_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-objcopy"
+    export OBJDUMP_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-objdump"
 
     # Build tools - must run on the BUILD machine, not the HOST
     # These are native compilers that build tools that run during compilation
@@ -906,11 +910,17 @@ configure_gcc() {
     
     # For Canadian Cross builds, use bundled zlib since OHOS sysroot may not have it
     # Also enable host PIE since OHOS defaults to PIE
+    # Use --with-build-time-tools to specify stage 1 tools for running on build machine
     local host_pie_configure=""
+    local build_time_tools=""
     if is_canadian_cross; then
         zlib_configure=""
         host_pie_configure="--enable-host-pie"
-        msg "Canadian Cross: Using bundled zlib and enabling host PIE"
+        # Point to stage 1 tools - these can run on the build machine and produce
+        # output for the target. This is essential for Canadian Cross builds where
+        # the newly built compiler cannot run on the build machine.
+        build_time_tools="--with-build-time-tools=${STAGE1_PREFIX}/bin"
+        msg "Canadian Cross: Using bundled zlib, enabling host PIE, and using stage 1 build-time tools"
     fi
 
     "${SOURCE_DIR}/configure" \
@@ -924,6 +934,7 @@ configure_gcc() {
         --with-bugurl="https://github.com/sanchuanhehe/ohos-gcc" \
         ${zlib_configure} \
         ${host_pie_configure} \
+        ${build_time_tools} \
         --enable-checking=release \
         --enable-languages="${LANGUAGES}" \
         --enable-__cxa_atexit \
@@ -953,14 +964,31 @@ build_gcc() {
     msg "Building GCC..."
     cd "${BUILD_DIR}"
     
-    make -j"${JOBS}" || error "Build failed"
+    # For Canadian Cross builds, we need to explicitly pass GCC_FOR_TARGET
+    # pointing to the stage 1 cross-compiler, because the newly built xgcc
+    # is an OHOS binary that cannot run on the Linux build machine.
+    if is_canadian_cross; then
+        make -j"${JOBS}" \
+            GCC_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-gcc" \
+            || error "Build failed"
+    else
+        make -j"${JOBS}" || error "Build failed"
+    fi
 }
 
 install_gcc() {
     msg "Installing GCC to ${INSTALL_PREFIX}..."
     cd "${BUILD_DIR}"
     
-    make install DESTDIR="${DESTDIR:-}" || error "Installation failed"
+    # For Canadian Cross builds, pass GCC_FOR_TARGET to avoid trying to run
+    # the newly built OHOS binaries on the Linux build machine.
+    if is_canadian_cross; then
+        make install DESTDIR="${DESTDIR:-}" \
+            GCC_FOR_TARGET="${STAGE1_PREFIX}/bin/${CTARGET}-gcc" \
+            || error "Installation failed"
+    else
+        make install DESTDIR="${DESTDIR:-}" || error "Installation failed"
+    fi
     
     local real_prefix="${DESTDIR:-}${INSTALL_PREFIX}"
     mkdir -p "${real_prefix}/bin"
