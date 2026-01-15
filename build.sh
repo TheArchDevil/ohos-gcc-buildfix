@@ -297,15 +297,12 @@ setup_canadian_cross_env() {
 
     # Build tools - must run on the BUILD machine, not the HOST
     # NOTE: We intentionally do NOT export CC_FOR_BUILD/CXX_FOR_BUILD as environment
-    # variables. When exported, GMP's configure script tries to validate CC_FOR_BUILD
-    # by running a test program. In parallel builds, multiple configure scripts may
-    # interfere with each other's conftest files, causing spurious failures.
-    # 
-    # Instead, we let GCC's configure auto-detect CC_FOR_BUILD (which defaults to gcc)
-    # and pass it properly to sub-projects through the build system, avoiding the
-    # parallel configure race condition.
+    # variables. Instead, we pass them on the configure command line in configure_gcc().
+    # This ensures the correct build compiler is used without triggering GMP's configure
+    # race condition that can occur when CC_FOR_BUILD is exported as an environment
+    # variable during parallel configure runs.
     #
-    # We still set these as shell variables (not exported) for local use in binutils build.
+    # We set these as shell variables for use in both binutils build and GCC configure.
     CC_FOR_BUILD="${CBUILD}-gcc"
     CXX_FOR_BUILD="${CBUILD}-g++"
     if ! command -v "${CC_FOR_BUILD}" >/dev/null 2>&1; then
@@ -964,9 +961,15 @@ configure_gcc() {
         msg "Canadian Cross: Using bundled zlib, enabling host PIE, and using stage 1 build-time tools"
     fi
 
-    # Run configure - for Canadian Cross, CC_FOR_BUILD/CXX_FOR_BUILD are already
-    # set in setup_canadian_cross_env() and stage 1 tools are in PATH
-    "${SOURCE_DIR}/configure" \
+    # Run configure - for Canadian Cross, pass CC_FOR_BUILD/CXX_FOR_BUILD explicitly
+    # on the command line rather than exporting them, to avoid GMP configure race
+    # condition while still ensuring the correct build compiler is used.
+    local cc_for_build_args=""
+    if is_canadian_cross; then
+        cc_for_build_args="CC_FOR_BUILD=${CC_FOR_BUILD} CXX_FOR_BUILD=${CXX_FOR_BUILD}"
+    fi
+    
+    ${cc_for_build_args} "${SOURCE_DIR}/configure" \
         --prefix="${INSTALL_PREFIX}" \
         --mandir="${INSTALL_PREFIX}/share/man" \
         --infodir="${INSTALL_PREFIX}/share/info" \
