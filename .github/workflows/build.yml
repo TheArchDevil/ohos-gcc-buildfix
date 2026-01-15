@@ -453,6 +453,8 @@ jobs:
 
       - name: Build Canadian Cross (Stage 2)
         run: |
+          set -o pipefail  # Ensure pipeline returns the exit code of the failed command
+          
           echo "=== Building native OHOS compiler (Canadian Cross) ==="
           echo "Build configuration:"
           echo "  CBUILD: x86_64-linux-gnu"
@@ -467,14 +469,14 @@ jobs:
           rm -rf build-ohos build-binutils
           
           # Run build with verbose output on failure
-          ./build.sh \
+          if ! ./build.sh \
             --build=x86_64-linux-gnu \
             --host=${{ matrix.target }} \
             --target=${{ matrix.target }} \
             --stage1=./install \
             --prefix=./install-stage2 \
             --jobs=$(nproc) \
-            all 2>&1 | tee build-stage2.log || {
+            all 2>&1 | tee build-stage2.log; then
               echo "=== BUILD FAILED - Last 200 lines of log ==="
               tail -200 build-stage2.log
               echo "=== Checking for configure errors ==="
@@ -482,7 +484,7 @@ jobs:
               echo "=== Checking CC_FOR_BUILD usage ==="
               grep -n "CC_FOR_BUILD\|checking build system compiler" build-stage2.log | tail -20 || true
               exit 1
-            }
+          fi
 
       - name: Verify native compiler binaries
         run: |
