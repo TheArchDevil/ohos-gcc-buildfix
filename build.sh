@@ -811,22 +811,16 @@ configure_gcc() {
     apply_sysroot_patches
     prepare_gcc
 
-    # Setup build environment based on build type
-    # Note: These setup functions set shell variables (CC_FOR_BUILD, AR_FOR_BUILD etc.)
-    # but we'll export them in the subshell below to avoid polluting the parent shell.
+    # Note: setup_*_env functions are called inside the subshell below
+    # to avoid polluting the parent shell with exported environment variables.
+    # But we need to check toolchains first (before subshell).
     if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
         check_stage2_toolchain
-        setup_native_ohos_env
     elif is_canadian_cross; then
         check_stage1_toolchain
-        setup_canadian_cross_env
     fi
 
     msg "Configuring GCC ${GCC_VERSION} for ${CTARGET}..."
-
-    if [ -d "${BINUTILS_INSTALL_PREFIX}/bin" ]; then
-        export PATH="${BINUTILS_INSTALL_PREFIX}/bin:${PATH}"
-    fi
 
     local extra_binutils_flags=""
     local as_path="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-as"
@@ -890,68 +884,28 @@ configure_gcc() {
     fi
 
     # Run configure in a subshell to avoid polluting the parent shell with
-    # exported environment variables (cache variables, *_FOR_BUILD, etc.)
-    # All configure-related environment setup is done inside this subshell.
+    # exported environment variables (CC, CXX, AR, PATH, cache variables, etc.)
+    # All environment setup is done inside this subshell.
     (
         # ================================================================
-        # Set build environment variables (inside subshell)
+        # Setup build environment based on build type (inside subshell)
         # ================================================================
-        
-        # # General cache variable
-        # export libat_cv_have_ifunc=no
-        
-        # # For cross-compilation to OHOS, provide libtool cache variables
-        # # to bypass dynamic linker detection tests that require running executables.
-        # if [ "${CHOST}" != "${CTARGET}" ]; then
-        #     case "${CTARGET}" in
-        #         *-linux-ohos*)
-        #             export lt_cv_deplibs_check_method='pass_all'
-        #             export lt_cv_file_magic_cmd='$MAGIC_CMD'
-        #             export lt_cv_file_magic_test_file=''
-        #             export lt_cv_ld_reload_flag='-r'
-        #             export lt_cv_nm_interface='BSD nm'
-        #             export lt_cv_objdir='.libs'
-        #             export lt_cv_path_LD="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-ld"
-        #             export lt_cv_path_NM="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-nm"
-        #             export lt_cv_prog_compiler_c_o='yes'
-        #             export lt_cv_prog_compiler_pic='-fPIC -DPIC'
-        #             export lt_cv_prog_compiler_pic_works='yes'
-        #             export lt_cv_prog_compiler_static_works='yes'
-        #             export lt_cv_prog_compiler_wl='-Wl,'
-        #             export lt_cv_prog_gnu_ld='yes'
-        #             export lt_cv_sys_global_symbol_pipe="sed -n -e 's/^.*[	 ]\\([ABCDGIRSTW][ABCDGIRSTW]*\\)[	 ][	 ]*\\([_A-Za-z][_A-Za-z0-9]*\\)\$/\\1 \\2 \\2/p' | sed '/ __gnu_lto/d'"
-        #             export lt_cv_sys_global_symbol_to_c_name_address="sed -n -e 's/^: \\([^ ]*\\) \$/  {\\\"\\1\\\", (void *) 0},/p' -e 's/^[ABCDGIRSTW]* \\([^ ]*\\) \\([^ ]*\\)\$/  {\\\"\\2\\\", (void *) \\&\\2},/p'"
-        #             export lt_cv_sys_global_symbol_to_cdecl="sed -n -e 's/^T .* \\(.*\\)\$/extern int \\1();/p' -e 's/^[ABCDGIRSTW]* .* \\(.*\\)\$/extern char \\1;/p'"
-        #             export lt_cv_sys_max_cmd_len='1572864'
-        #             export lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib'
-        #             export lt_cv_sys_lib_search_path_spec='/lib /usr/lib'
-        #             export glibcxx_cv_BSWAP='yes'
-        #             export ac_cv_func_sched_yield='yes'
-        #             export ac_cv_func_uselocale='yes'
-        #             ;;
-        #     esac
-        # fi
-        
-        # # For Canadian Cross builds, set cache variables for C++14 support
-        # # and export *_FOR_BUILD variables
-        # if is_canadian_cross; then
-        #     # C++14 cache variables to bypass runtime tests
-        #     export ax_cv_cxx_compile_cxx14='yes'
-        #     export ac_cv_prog_cxx_g='yes'
-        #     export ac_cv_prog_cc_g='yes'
-        #     export gcc_cv_prog_cxx_stdcxx='cxx14'
-        #     export ax_cv_cxx_compile_cxx14_FOR_BUILD='yes'
-        #     export ac_cv_prog_cxx_g_FOR_BUILD='yes'
-            
-        #     # Export *_FOR_BUILD variables with -B option to find native linker
-        #     # GMP's configure uses $CC_FOR_BUILD directly without CFLAGS_FOR_BUILD
-        #     export CC_FOR_BUILD="${CC_FOR_BUILD} -B/usr/bin"
-        #     export CXX_FOR_BUILD="${CXX_FOR_BUILD} -B/usr/bin"
-        #     export AR_FOR_BUILD="${AR_FOR_BUILD}"
-        #     export RANLIB_FOR_BUILD="${RANLIB_FOR_BUILD}"
-            
-        #     msg "Canadian Cross: Set C++14 cache variables and *_FOR_BUILD tools"
-        # fi
+        if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
+            setup_native_ohos_env
+        elif is_canadian_cross; then
+            setup_canadian_cross_env
+            # For Canadian Cross, add -B/usr/bin to CC_FOR_BUILD so GMP configure
+            # can find the native linker (GMP uses $CC_FOR_BUILD directly)
+            export CC_FOR_BUILD="${CC_FOR_BUILD} -B/usr/bin"
+            export CXX_FOR_BUILD="${CXX_FOR_BUILD} -B/usr/bin"
+            export AR_FOR_BUILD="${AR_FOR_BUILD}"
+            export RANLIB_FOR_BUILD="${RANLIB_FOR_BUILD}"
+        fi
+
+        # Add binutils to PATH
+        if [ -d "${BINUTILS_INSTALL_PREFIX}/bin" ]; then
+            export PATH="${BINUTILS_INSTALL_PREFIX}/bin:${PATH}"
+        fi
         
         # Configure flags for different build scenarios
         if is_canadian_cross; then
