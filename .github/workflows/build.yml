@@ -131,91 +131,10 @@ jobs:
           restore-keys: |
             ndk-sysroot-${{ matrix.target }}-
 
-      - name: Cache binutils build
-        id: cache-binutils
-        uses: actions/cache@v4
-        with:
-          path: |
-            install/bin/${{ matrix.target }}-*
-            install/${{ matrix.target }}
-            install/lib/bfd-plugins
-          key: binutils-${{ matrix.target }}-${{ hashFiles('binutils-patches/*.patch') }}
-
-      - name: Prepare sources (download NDK, apply patches)
-        run: |
-          chmod +x build.sh
-          echo "=== Preparing sources ==="
-          ./build.sh --target=${{ matrix.target }} prepare
-          
-          echo "=== Verifying source preparation ==="
-          echo "--- GCC source ---"
-          if [ -d "gcc-${{ env.GCC_VERSION }}" ]; then
-            echo "  ✓ GCC ${{ env.GCC_VERSION }} source directory exists"
-            ls gcc-${{ env.GCC_VERSION }}/*.c 2>/dev/null | head -3 || true
-          else
-            echo "  ✗ GCC source directory not found!"
-            ls -la
-            exit 1
-          fi
-          
-          echo "--- Binutils source ---"
-          if [ -d "binutils-${{ env.BINUTILS_VERSION }}" ]; then
-            echo "  ✓ Binutils ${{ env.BINUTILS_VERSION }} source directory exists"
-          else
-            echo "  ✗ Binutils source directory not found!"
-            exit 1
-          fi
-          
-          echo "--- Sysroot ---"
-          if [ -d "ndk/sysroot" ]; then
-            echo "  ✓ NDK sysroot exists"
-            echo "  Files: $(find ndk/sysroot -type f | wc -l)"
-          else
-            echo "  ✗ NDK sysroot not found!"
-            exit 1
-          fi
-          
-          echo "--- Disk space after prepare ---"
-          df -h .
-
-      - name: Build binutils
-        if: steps.cache-binutils.outputs.cache-hit != 'true'
-        run: |
-          echo "=== Building Binutils ==="
-          ./build.sh --target=${{ matrix.target }} binutils 2>&1 | tee build-binutils.log || {
-            echo "=== BINUTILS BUILD FAILED ==="
-            tail -100 build-binutils.log
-            exit 1
-          }
-
-      - name: Configure GCC
-        run: |
-          echo "=== Configuring GCC ==="
-          ./build.sh --target=${{ matrix.target }} configure 2>&1 | tee configure-gcc.log || {
-            echo "=== GCC CONFIGURE FAILED ==="
-            tail -100 configure-gcc.log
-            echo "=== Checking for specific errors ==="
-            grep -i "error\|cannot\|not found" configure-gcc.log | tail -30 || true
-            exit 1
-          }
-
-      - name: Build GCC
-        run: |
-          echo "=== Building GCC ==="
-          echo "Using $(nproc) parallel jobs"
-          ./build.sh --target=${{ matrix.target }} --jobs=$(nproc) build 2>&1 | tee build-gcc.log || {
-            echo "=== GCC BUILD FAILED ==="
-            echo "--- Last 200 lines ---"
-            tail -200 build-gcc.log
-            echo "--- Error summary ---"
-            grep -n -i "error\[:\]\|fatal\|failed" build-gcc.log | tail -30 || true
-            exit 1
-          }
-
-      - name: Install GCC
+      - name: build GCC
         run: |
           echo "=== Installing GCC ==="
-          ./build.sh --target=${{ matrix.target }} install 2>&1 | tee install-gcc.log || {
+          ./build.sh --target=${{ matrix.target }} all 2>&1 | tee all-gcc.log || {
             echo "=== GCC INSTALL FAILED ==="
             tail -100 install-gcc.log
             exit 1
