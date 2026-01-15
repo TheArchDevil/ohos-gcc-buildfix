@@ -11,6 +11,9 @@ on:
         description: 'Run ID of the build workflow to test'
         required: false
 
+env:
+  GCC_VERSION: '15.2.0'
+
 jobs:
   test:
     name: Test ${{ matrix.target }} toolchain
@@ -31,7 +34,7 @@ jobs:
       - name: Download toolchain artifact
         uses: actions/download-artifact@v4
         with:
-          name: gcc-ohos-${{ matrix.target }}
+          name: gcc-cross-${{ matrix.target }}
           path: toolchain-archive
           run-id: ${{ github.event.workflow_run.id || inputs.artifact_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -40,12 +43,23 @@ jobs:
       - name: Extract toolchain
         run: |
           mkdir -p toolchain
-          if [ -f toolchain-archive/gcc-ohos-${{ matrix.target }}.tar.xz ]; then
-            tar -xJf toolchain-archive/gcc-ohos-${{ matrix.target }}.tar.xz -C toolchain
+          # Check for the artifact tarball with correct naming
+          if [ -f "toolchain-archive/gcc-${{ env.GCC_VERSION }}-cross-${{ matrix.target }}.tar.xz" ]; then
+            echo "Found expected artifact file"
+            tar -xJf "toolchain-archive/gcc-${{ env.GCC_VERSION }}-cross-${{ matrix.target }}.tar.xz" -C toolchain
+          elif ls toolchain-archive/*.tar.xz 1>/dev/null 2>&1; then
+            # Fallback: extract any tarball found
+            echo "Using fallback: extracting first tarball found"
+            tar -xJf toolchain-archive/*.tar.xz -C toolchain
           else
             echo "Artifact not found, skipping test"
+            echo "Contents of toolchain-archive:"
+            ls -la toolchain-archive/ 2>/dev/null || echo "Directory does not exist"
             exit 0
           fi
+          
+          echo "Toolchain extracted successfully:"
+          ls -la toolchain/bin/ | head -10
 
       - name: Download and setup sysroot
         run: |
