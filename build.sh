@@ -493,6 +493,188 @@ apply_sysroot_patches() {
     fi
 }
 
+# Download GCC prerequisites (GMP, MPFR, MPC, ISL, gettext)
+download_prerequisites() {
+    msg "Checking GCC prerequisites..."
+
+    cd "${SOURCE_DIR}"
+
+    # Check if prerequisites already downloaded
+    local need_download=0
+    for dep in gmp mpfr mpc isl gettext; do
+        if [ ! -e "${dep}" ]; then
+            need_download=1
+            break
+        fi
+    done
+
+    if [ "${need_download}" -eq 0 ]; then
+        msg "Prerequisites already downloaded"
+        # Still need to apply patches in case they weren't applied
+        apply_prerequisite_patches
+        cd "${SCRIPT_DIR}"
+        return 0
+    fi
+
+    msg "Downloading GCC prerequisites..."
+
+    # Use GCC's contrib script to download prerequisites
+    if [ -x "./contrib/download_prerequisites" ]; then
+        ./contrib/download_prerequisites || error "Failed to download prerequisites"
+    else
+        error "download_prerequisites script not found in GCC source"
+    fi
+
+    # Apply patches for OHOS support to all prerequisites
+    apply_prerequisite_patches
+
+    cd "${SCRIPT_DIR}"
+}
+
+# Apply patches to all GCC prerequisites for OHOS support
+apply_prerequisite_patches() {
+    apply_gmp_patches
+    apply_mpfr_patches
+    apply_mpc_patches
+    apply_isl_patches
+    apply_gettext_patches
+}
+
+# Apply patches to GMP for OHOS support
+apply_gmp_patches() {
+    local gmp_dir="${SOURCE_DIR}/gmp"
+
+    if [ ! -d "${gmp_dir}" ]; then
+        msg "GMP directory not found, skipping patches"
+        return 0
+    fi
+
+    local real_gmp_dir
+    real_gmp_dir=$(readlink -f "${gmp_dir}")
+
+    if [ ! -d "${SCRIPT_DIR}/gmp-patches" ]; then
+        return 0
+    fi
+
+    msg "Applying GMP patches for OHOS support..."
+
+    for patch in "${SCRIPT_DIR}"/gmp-patches/*.patch; do
+        [ -f "${patch}" ] || continue
+        msg "Applying $(basename "${patch}") to GMP..."
+        cd "${real_gmp_dir}"
+        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
+        cd "${SCRIPT_DIR}"
+    done
+}
+
+# Apply patches to MPFR for OHOS support
+apply_mpfr_patches() {
+    local mpfr_dir="${SOURCE_DIR}/mpfr"
+
+    if [ ! -d "${mpfr_dir}" ]; then
+        msg "MPFR directory not found, skipping patches"
+        return 0
+    fi
+
+    local real_mpfr_dir
+    real_mpfr_dir=$(readlink -f "${mpfr_dir}")
+
+    if [ ! -d "${SCRIPT_DIR}/mpfr-patches" ]; then
+        return 0
+    fi
+
+    msg "Applying MPFR patches for OHOS support..."
+
+    for patch in "${SCRIPT_DIR}"/mpfr-patches/*.patch; do
+        [ -f "${patch}" ] || continue
+        msg "Applying $(basename "${patch}") to MPFR..."
+        cd "${real_mpfr_dir}"
+        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
+        cd "${SCRIPT_DIR}"
+    done
+}
+
+# Apply patches to MPC for OHOS support
+apply_mpc_patches() {
+    local mpc_dir="${SOURCE_DIR}/mpc"
+
+    if [ ! -d "${mpc_dir}" ]; then
+        msg "MPC directory not found, skipping patches"
+        return 0
+    fi
+
+    local real_mpc_dir
+    real_mpc_dir=$(readlink -f "${mpc_dir}")
+
+    if [ ! -d "${SCRIPT_DIR}/mpc-patches" ]; then
+        return 0
+    fi
+
+    msg "Applying MPC patches for OHOS support..."
+
+    for patch in "${SCRIPT_DIR}"/mpc-patches/*.patch; do
+        [ -f "${patch}" ] || continue
+        msg "Applying $(basename "${patch}") to MPC..."
+        cd "${real_mpc_dir}"
+        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
+        cd "${SCRIPT_DIR}"
+    done
+}
+
+# Apply patches to ISL for OHOS support
+apply_isl_patches() {
+    local isl_dir="${SOURCE_DIR}/isl"
+
+    if [ ! -d "${isl_dir}" ]; then
+        msg "ISL directory not found, skipping patches"
+        return 0
+    fi
+
+    local real_isl_dir
+    real_isl_dir=$(readlink -f "${isl_dir}")
+
+    if [ ! -d "${SCRIPT_DIR}/isl-patches" ]; then
+        return 0
+    fi
+
+    msg "Applying ISL patches for OHOS support..."
+
+    for patch in "${SCRIPT_DIR}"/isl-patches/*.patch; do
+        [ -f "${patch}" ] || continue
+        msg "Applying $(basename "${patch}") to ISL..."
+        cd "${real_isl_dir}"
+        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
+        cd "${SCRIPT_DIR}"
+    done
+}
+
+# Apply patches to gettext for OHOS support
+apply_gettext_patches() {
+    local gettext_dir="${SOURCE_DIR}/gettext"
+
+    if [ ! -d "${gettext_dir}" ]; then
+        msg "gettext directory not found, skipping patches"
+        return 0
+    fi
+
+    local real_gettext_dir
+    real_gettext_dir=$(readlink -f "${gettext_dir}")
+
+    if [ ! -d "${SCRIPT_DIR}/gettext-patches" ]; then
+        return 0
+    fi
+
+    msg "Applying gettext patches for OHOS support..."
+
+    for patch in "${SCRIPT_DIR}"/gettext-patches/*.patch; do
+        [ -f "${patch}" ] || continue
+        msg "Applying $(basename "${patch}") to gettext..."
+        cd "${real_gettext_dir}"
+        patch -p0 -N -i "${patch}" 2>/dev/null || msg "Patch $(basename "${patch}") already applied or failed"
+        cd "${SCRIPT_DIR}"
+    done
+}
+
 prepare_gcc() {
     msg "Preparing GCC source directory..."
 
@@ -508,6 +690,9 @@ prepare_gcc() {
         msg "Extracting GCC source..."
         tar -xf "${tarball}" || error "Failed to extract GCC source"
     fi
+
+    # Download prerequisites (GMP, MPFR, MPC, ISL, gettext)
+    download_prerequisites
 
     # Apply patches
     msg "Applying GCC patches..."
@@ -763,14 +948,15 @@ GCC Build Script for OpenHarmony (OHOS) Target
 Usage: $0 [OPTIONS] [COMMAND]
 
 Commands:
-    prepare_ndk   Download and setup NDK sysroot only
-    prepare       Download NDK/sources and apply patches for binutils and GCC
-    binutils      Build and install binutils only
-    configure     Ensure binutils exist and configure GCC
-    build         Build GCC
-    install       Install GCC
-    all           Run full pipeline (NDK + binutils + GCC)
-    clean         Clean build directories
+    prepare_ndk         Download and setup NDK sysroot only
+    prepare             Download NDK/sources and apply patches for binutils and GCC
+    download_prereqs    Download GCC prerequisites (GMP, MPFR, MPC, ISL, gettext)
+    binutils            Build and install binutils only
+    configure           Ensure binutils exist and configure GCC
+    build               Build GCC
+    install             Install GCC
+    all                 Run full pipeline (NDK + binutils + GCC)
+    clean               Clean build directories
 
 Options:
   --target=TARGET           Set target triplet (default: aarch64-linux-ohos)
@@ -868,7 +1054,7 @@ while [ $# -gt 0 ]; do
         --enable-languages=*)
             LANGUAGES="${1#*=}"
             ;;
-        prepare_ndk|prepare|binutils|configure|build|install|all|clean|prepare_binutils)
+        prepare_ndk|prepare|binutils|configure|build|install|all|clean|prepare_binutils|download_prereqs)
             COMMAND="$1"
             ;;
         *)
@@ -977,6 +1163,14 @@ case "${COMMAND}" in
         ;;
     prepare_binutils)
         prepare_binutils
+        ;;
+    download_prereqs)
+        # Ensure GCC source exists before downloading prerequisites
+        if [ ! -d "${SOURCE_DIR}" ]; then
+            error "GCC source directory not found: ${SOURCE_DIR}
+Please run 'prepare' or download GCC source first."
+        fi
+        download_prerequisites
         ;;
     binutils)
         build_binutils
