@@ -321,6 +321,20 @@ setup_canadian_cross_env() {
             CXX_FOR_BUILD="g++"
         fi
     fi
+    
+    # Set AR_FOR_BUILD, RANLIB_FOR_BUILD etc. for building tools that run on BUILD machine
+    # This is critical for build-libiberty which needs native ar, not cross ar
+    if [[ -x "/usr/bin/${CBUILD}-ar" ]]; then
+        AR_FOR_BUILD="/usr/bin/${CBUILD}-ar"
+        RANLIB_FOR_BUILD="/usr/bin/${CBUILD}-ranlib"
+    elif [[ -x "/usr/bin/ar" ]]; then
+        AR_FOR_BUILD="/usr/bin/ar"
+        RANLIB_FOR_BUILD="/usr/bin/ranlib"
+    else
+        AR_FOR_BUILD="ar"
+        RANLIB_FOR_BUILD="ranlib"
+    fi
+    
     # Add -B flag via CFLAGS_FOR_BUILD to tell the compiler where to find the native 
     # binutils (ld, as, etc.). This is critical for Canadian Cross builds where PATH 
     # is modified to include cross-compiler tools, which could confuse collect2's 
@@ -334,6 +348,8 @@ setup_canadian_cross_env() {
     echo "  PATH includes: ${STAGE1_PREFIX}/bin"
     echo "  CC=${CC}"
     echo "  CC_FOR_BUILD=${CC_FOR_BUILD} (not exported, to avoid GMP configure race)"
+    echo "  AR_FOR_BUILD=${AR_FOR_BUILD}"
+    echo "  RANLIB_FOR_BUILD=${RANLIB_FOR_BUILD}"
     echo "  CFLAGS_FOR_BUILD=${CFLAGS_FOR_BUILD}"
     echo "  GCC_FOR_TARGET=${GCC_FOR_TARGET}"
     echo "  CFLAGS=${CFLAGS}"
@@ -991,9 +1007,12 @@ configure_gcc() {
     # We use a subshell with export to avoid polluting the parent shell.
     (
         # 如果是 Canadian Cross，在子shell中临时设置环境变量
+        # -B/usr/bin 确保 GMP configure 能找到原生链接器
         if is_canadian_cross; then
             export CC_FOR_BUILD="${CC_FOR_BUILD} -B/usr/bin"
             export CXX_FOR_BUILD="${CXX_FOR_BUILD} -B/usr/bin"
+            export AR_FOR_BUILD="${AR_FOR_BUILD}"
+            export RANLIB_FOR_BUILD="${RANLIB_FOR_BUILD}"
         fi
 
         "${SOURCE_DIR}/configure" \
