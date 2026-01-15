@@ -962,14 +962,15 @@ configure_gcc() {
     fi
 
     # Run configure - for Canadian Cross, pass CC_FOR_BUILD/CXX_FOR_BUILD explicitly
-    # on the command line rather than exporting them, to avoid GMP configure race
-    # condition while still ensuring the correct build compiler is used.
-    local cc_for_build_args=""
+    # using env command to set them as environment variables for configure only.
+    # This avoids exporting them globally (which can cause GMP configure race
+    # conditions) while still ensuring the correct build compiler is used.
+    local env_prefix=""
     if is_canadian_cross; then
-        cc_for_build_args="CC_FOR_BUILD=${CC_FOR_BUILD} CXX_FOR_BUILD=${CXX_FOR_BUILD}"
+        env_prefix="env CC_FOR_BUILD=${CC_FOR_BUILD} CXX_FOR_BUILD=${CXX_FOR_BUILD}"
     fi
     
-    ${cc_for_build_args} "${SOURCE_DIR}/configure" \
+    ${env_prefix} "${SOURCE_DIR}/configure" \
         --prefix="${INSTALL_PREFIX}" \
         --mandir="${INSTALL_PREFIX}/share/man" \
         --infodir="${INSTALL_PREFIX}/share/info" \
