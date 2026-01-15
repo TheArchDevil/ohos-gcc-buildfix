@@ -812,6 +812,8 @@ configure_gcc() {
     prepare_gcc
 
     # Setup build environment based on build type
+    # Note: These setup functions set shell variables (CC_FOR_BUILD, AR_FOR_BUILD etc.)
+    # but we'll export them in the subshell below to avoid polluting the parent shell.
     if is_native_ohos_build && [ -n "${STAGE2_PREFIX}" ]; then
         check_stage2_toolchain
         setup_native_ohos_env
@@ -835,102 +837,6 @@ configure_gcc() {
     # Create build directory
     mkdir -p "${BUILD_DIR}"
     cd "${BUILD_DIR}"
-    
-    # Set build environment
-    export libat_cv_have_ifunc=no
-    
-    # For cross-compilation to OHOS, we need to provide libtool cache variables
-    # to bypass dynamic linker detection tests that require running executables.
-    # OHOS uses musl-style dynamic linker paths.
-    if [ "${CHOST}" != "${CTARGET}" ]; then
-        case "${CTARGET}" in
-            *-linux-ohos*)
-                # Libtool cache variables for OHOS target
-                # These tell configure to skip link tests that require running executables
-                export lt_cv_deplibs_check_method='pass_all'
-                export lt_cv_file_magic_cmd='$MAGIC_CMD'
-                export lt_cv_file_magic_test_file=''
-                export lt_cv_ld_reload_flag='-r'
-                export lt_cv_nm_interface='BSD nm'
-                export lt_cv_objdir='.libs'
-                export lt_cv_path_LD="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-ld"
-                export lt_cv_path_NM="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-nm"
-                export lt_cv_prog_compiler_c_o='yes'
-                export lt_cv_prog_compiler_pic='-fPIC -DPIC'
-                export lt_cv_prog_compiler_pic_works='yes'
-                export lt_cv_prog_compiler_static_works='yes'
-                export lt_cv_prog_compiler_wl='-Wl,'
-                export lt_cv_prog_gnu_ld='yes'
-                export lt_cv_sys_global_symbol_pipe="sed -n -e 's/^.*[	 ]\\([ABCDGIRSTW][ABCDGIRSTW]*\\)[	 ][	 ]*\\([_A-Za-z][_A-Za-z0-9]*\\)\$/\\1 \\2 \\2/p' | sed '/ __gnu_lto/d'"
-                export lt_cv_sys_global_symbol_to_c_name_address="sed -n -e 's/^: \\([^ ]*\\) \$/  {\\\"\\1\\\", (void *) 0},/p' -e 's/^[ABCDGIRSTW]* \\([^ ]*\\) \\([^ ]*\\)\$/  {\\\"\\2\\\", (void *) \\&\\2},/p'"
-                export lt_cv_sys_global_symbol_to_cdecl="sed -n -e 's/^T .* \\(.*\\)\$/extern int \\1();/p' -e 's/^[ABCDGIRSTW]* .* \\(.*\\)\$/extern char \\1;/p'"
-                export lt_cv_sys_max_cmd_len='1572864'
-                
-                # Dynamic linker path for OHOS (musl-style)
-                case "${CTARGET_ARCH}" in
-                    x86_64)  export lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib' ;;
-                    aarch64) export lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib' ;;
-                    *)       export lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib' ;;
-                esac
-                export lt_cv_sys_lib_search_path_spec='/lib /usr/lib'
-                
-                # Additional cache variables to help libstdc++ configure
-                export glibcxx_cv_BSWAP='yes'
-                export ac_cv_func_sched_yield='yes'
-                export ac_cv_func_uselocale='yes'
-                ;;
-        esac
-    fi
-    
-    # For Canadian Cross builds, we need to tell configure that the HOST compiler
-    # (stage 1 cross-compiler) supports C++14. Since the cross-compiler produces
-    # binaries that can't run on the BUILD machine, configure cannot test this
-    # by running a program. We provide cache variables to skip these runtime tests.
-    if is_canadian_cross; then
-        # Tell configure the HOST (cross) compiler supports C++14
-        # These variables bypass runtime tests that would fail for cross-compilation
-        export ax_cv_cxx_compile_cxx14='yes'
-        export ac_cv_prog_cxx_g='yes'
-        export ac_cv_prog_cc_g='yes'
-        # GCC's configure checks for C++14 support via compilation test only
-        # but some sub-configures may try to run test programs
-        export gcc_cv_prog_cxx_stdcxx='cxx14'
-        
-        # Also set the cache variables for the BUILD compiler (g++)
-        # GCC configure also checks if the build system's compiler supports C++14
-        # These are separate from the HOST compiler checks above
-        export ax_cv_cxx_compile_cxx14_FOR_BUILD='yes'
-        export ac_cv_prog_cxx_g_FOR_BUILD='yes'
-        
-        msg "Canadian Cross: Set C++14 cache variables to bypass runtime tests"
-    fi
-    
-    # Configure flags for different build scenarios
-    if is_canadian_cross; then
-        # Canadian Cross (stage 2): CBUILD != CHOST = CTARGET
-        # Host compiler is the stage 1 cross-compiler, target is native OHOS
-        export CFLAGS="${CFLAGS:-} -g0 -O2"
-        export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
-        export CFLAGS_FOR_TARGET="${CFLAGS}"
-        export CXXFLAGS_FOR_TARGET="${CXXFLAGS}"
-        export LDFLAGS_FOR_TARGET="${LDFLAGS:-}"
-    elif [ "${CHOST}" != "${CTARGET}" ]; then
-        # Stage 1 Cross-compilation: CHOST != CTARGET
-        export CFLAGS="${CFLAGS:-} -g0 -O2"
-        export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
-        export CFLAGS_FOR_TARGET=" "
-        export CXXFLAGS_FOR_TARGET=" "
-        export LDFLAGS_FOR_TARGET=" "
-    else
-        # Native build: CBUILD = CHOST = CTARGET
-        export CFLAGS="${CFLAGS:-} -g0 -O2"
-        export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
-        export CFLAGS_FOR_TARGET="${CFLAGS}"
-        export CXXFLAGS_FOR_TARGET="${CXXFLAGS}"
-        export LDFLAGS_FOR_TARGET="${LDFLAGS:-}"
-        export BOOT_CFLAGS="${CFLAGS}"
-        export BOOT_LDFLAGS="${LDFLAGS:-}"
-    fi
     
     # Determine build type string for display
     local build_type="native"
@@ -960,26 +866,12 @@ configure_gcc() {
     echo "  CROSS_COMPILE=${CROSS_COMPILE}"
     echo ""
 
-    if [ -n "${CROSS_COMPILE}" ]; then
-        export AR_FOR_TARGET="${AR_FOR_TARGET:-${CROSS_COMPILE}ar}"
-        export AS_FOR_TARGET="${AS_FOR_TARGET:-${CROSS_COMPILE}as}"
-        export LD_FOR_TARGET="${LD_FOR_TARGET:-${CROSS_COMPILE}ld}"
-        export NM_FOR_TARGET="${NM_FOR_TARGET:-${CROSS_COMPILE}nm}"
-        export OBJDUMP_FOR_TARGET="${OBJDUMP_FOR_TARGET:-${CROSS_COMPILE}objdump}"
-        export OBJCOPY_FOR_TARGET="${OBJCOPY_FOR_TARGET:-${CROSS_COMPILE}objcopy}"
-        export RANLIB_FOR_TARGET="${RANLIB_FOR_TARGET:-${CROSS_COMPILE}ranlib}"
-        export STRIP_FOR_TARGET="${STRIP_FOR_TARGET:-${CROSS_COMPILE}strip}"
-    fi
-    
     # Configure GCC
     local cross_configure=()
     local zlib_configure="--with-system-zlib"
     
     if [ "${CBUILD}" != "${CHOST}" ] || [ "${CHOST}" != "${CTARGET}" ]; then
         cross_configure+=("--disable-bootstrap")
-        # Note: We keep PIE enabled for cross-compilation because OHOS uses PIE.
-        # The t-ohos-crtstuff makefile fragment ensures crtbegin.o is compiled
-        # with PIC to be compatible with PIE executables.
     fi
     if [ "${CHOST}" != "${CTARGET}" ] && [ -n "${SYSROOT}" ]; then
         cross_configure+=("--with-sysroot=${SYSROOT}")
@@ -993,28 +885,112 @@ configure_gcc() {
     if is_canadian_cross; then
         zlib_configure=""
         host_pie_configure="--enable-host-pie"
-        # Point to stage 1 tools - these can run on the build machine and produce
-        # output for the target. This is essential for Canadian Cross builds where
-        # the newly built compiler cannot run on the build machine.
-        # Note: --with-build-time-tools still needs absolute path as a configure option
         build_time_tools="--with-build-time-tools=${STAGE1_PREFIX}/bin"
         msg "Canadian Cross: Using bundled zlib, enabling host PIE, and using stage 1 build-time tools"
     fi
 
-    # Run configure - for Canadian Cross, we need to set CC_FOR_BUILD/CXX_FOR_BUILD
-    # as environment variables. GMP's configure uses $CC_FOR_BUILD directly without
-    # CFLAGS_FOR_BUILD, so we must include -B option in CC_FOR_BUILD itself.
-    # We use a subshell with export to avoid polluting the parent shell.
+    # Run configure in a subshell to avoid polluting the parent shell with
+    # exported environment variables (cache variables, *_FOR_BUILD, etc.)
+    # All configure-related environment setup is done inside this subshell.
     (
-        # 如果是 Canadian Cross，在子shell中临时设置环境变量
-        # -B/usr/bin 确保 GMP configure 能找到原生链接器
+        # ================================================================
+        # Set build environment variables (inside subshell)
+        # ================================================================
+        
+        # # General cache variable
+        # export libat_cv_have_ifunc=no
+        
+        # # For cross-compilation to OHOS, provide libtool cache variables
+        # # to bypass dynamic linker detection tests that require running executables.
+        # if [ "${CHOST}" != "${CTARGET}" ]; then
+        #     case "${CTARGET}" in
+        #         *-linux-ohos*)
+        #             export lt_cv_deplibs_check_method='pass_all'
+        #             export lt_cv_file_magic_cmd='$MAGIC_CMD'
+        #             export lt_cv_file_magic_test_file=''
+        #             export lt_cv_ld_reload_flag='-r'
+        #             export lt_cv_nm_interface='BSD nm'
+        #             export lt_cv_objdir='.libs'
+        #             export lt_cv_path_LD="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-ld"
+        #             export lt_cv_path_NM="${BINUTILS_INSTALL_PREFIX}/bin/${CTARGET}-nm"
+        #             export lt_cv_prog_compiler_c_o='yes'
+        #             export lt_cv_prog_compiler_pic='-fPIC -DPIC'
+        #             export lt_cv_prog_compiler_pic_works='yes'
+        #             export lt_cv_prog_compiler_static_works='yes'
+        #             export lt_cv_prog_compiler_wl='-Wl,'
+        #             export lt_cv_prog_gnu_ld='yes'
+        #             export lt_cv_sys_global_symbol_pipe="sed -n -e 's/^.*[	 ]\\([ABCDGIRSTW][ABCDGIRSTW]*\\)[	 ][	 ]*\\([_A-Za-z][_A-Za-z0-9]*\\)\$/\\1 \\2 \\2/p' | sed '/ __gnu_lto/d'"
+        #             export lt_cv_sys_global_symbol_to_c_name_address="sed -n -e 's/^: \\([^ ]*\\) \$/  {\\\"\\1\\\", (void *) 0},/p' -e 's/^[ABCDGIRSTW]* \\([^ ]*\\) \\([^ ]*\\)\$/  {\\\"\\2\\\", (void *) \\&\\2},/p'"
+        #             export lt_cv_sys_global_symbol_to_cdecl="sed -n -e 's/^T .* \\(.*\\)\$/extern int \\1();/p' -e 's/^[ABCDGIRSTW]* .* \\(.*\\)\$/extern char \\1;/p'"
+        #             export lt_cv_sys_max_cmd_len='1572864'
+        #             export lt_cv_sys_lib_dlsearch_path_spec='/lib /usr/lib'
+        #             export lt_cv_sys_lib_search_path_spec='/lib /usr/lib'
+        #             export glibcxx_cv_BSWAP='yes'
+        #             export ac_cv_func_sched_yield='yes'
+        #             export ac_cv_func_uselocale='yes'
+        #             ;;
+        #     esac
+        # fi
+        
+        # # For Canadian Cross builds, set cache variables for C++14 support
+        # # and export *_FOR_BUILD variables
+        # if is_canadian_cross; then
+        #     # C++14 cache variables to bypass runtime tests
+        #     export ax_cv_cxx_compile_cxx14='yes'
+        #     export ac_cv_prog_cxx_g='yes'
+        #     export ac_cv_prog_cc_g='yes'
+        #     export gcc_cv_prog_cxx_stdcxx='cxx14'
+        #     export ax_cv_cxx_compile_cxx14_FOR_BUILD='yes'
+        #     export ac_cv_prog_cxx_g_FOR_BUILD='yes'
+            
+        #     # Export *_FOR_BUILD variables with -B option to find native linker
+        #     # GMP's configure uses $CC_FOR_BUILD directly without CFLAGS_FOR_BUILD
+        #     export CC_FOR_BUILD="${CC_FOR_BUILD} -B/usr/bin"
+        #     export CXX_FOR_BUILD="${CXX_FOR_BUILD} -B/usr/bin"
+        #     export AR_FOR_BUILD="${AR_FOR_BUILD}"
+        #     export RANLIB_FOR_BUILD="${RANLIB_FOR_BUILD}"
+            
+        #     msg "Canadian Cross: Set C++14 cache variables and *_FOR_BUILD tools"
+        # fi
+        
+        # Configure flags for different build scenarios
         if is_canadian_cross; then
-            export CC_FOR_BUILD="${CC_FOR_BUILD} -B/usr/bin"
-            export CXX_FOR_BUILD="${CXX_FOR_BUILD} -B/usr/bin"
-            export AR_FOR_BUILD="${AR_FOR_BUILD}"
-            export RANLIB_FOR_BUILD="${RANLIB_FOR_BUILD}"
+            export CFLAGS="${CFLAGS:-} -g0 -O2"
+            export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
+            export CFLAGS_FOR_TARGET="${CFLAGS}"
+            export CXXFLAGS_FOR_TARGET="${CXXFLAGS}"
+            export LDFLAGS_FOR_TARGET="${LDFLAGS:-}"
+        elif [ "${CHOST}" != "${CTARGET}" ]; then
+            export CFLAGS="${CFLAGS:-} -g0 -O2"
+            export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
+            export CFLAGS_FOR_TARGET=" "
+            export CXXFLAGS_FOR_TARGET=" "
+            export LDFLAGS_FOR_TARGET=" "
+        else
+            export CFLAGS="${CFLAGS:-} -g0 -O2"
+            export CXXFLAGS="${CXXFLAGS:-} -g0 -O2"
+            export CFLAGS_FOR_TARGET="${CFLAGS}"
+            export CXXFLAGS_FOR_TARGET="${CXXFLAGS}"
+            export LDFLAGS_FOR_TARGET="${LDFLAGS:-}"
+            export BOOT_CFLAGS="${CFLAGS}"
+            export BOOT_LDFLAGS="${LDFLAGS:-}"
         fi
 
+        # Set *_FOR_TARGET from CROSS_COMPILE if specified
+        if [ -n "${CROSS_COMPILE}" ]; then
+            export AR_FOR_TARGET="${AR_FOR_TARGET:-${CROSS_COMPILE}ar}"
+            export AS_FOR_TARGET="${AS_FOR_TARGET:-${CROSS_COMPILE}as}"
+            export LD_FOR_TARGET="${LD_FOR_TARGET:-${CROSS_COMPILE}ld}"
+            export NM_FOR_TARGET="${NM_FOR_TARGET:-${CROSS_COMPILE}nm}"
+            export OBJDUMP_FOR_TARGET="${OBJDUMP_FOR_TARGET:-${CROSS_COMPILE}objdump}"
+            export OBJCOPY_FOR_TARGET="${OBJCOPY_FOR_TARGET:-${CROSS_COMPILE}objcopy}"
+            export RANLIB_FOR_TARGET="${RANLIB_FOR_TARGET:-${CROSS_COMPILE}ranlib}"
+            export STRIP_FOR_TARGET="${STRIP_FOR_TARGET:-${CROSS_COMPILE}strip}"
+        fi
+
+        # ================================================================
+        # Run configure
+        # ================================================================
         "${SOURCE_DIR}/configure" \
             --prefix="${INSTALL_PREFIX}" \
             --mandir="${INSTALL_PREFIX}/share/man" \
