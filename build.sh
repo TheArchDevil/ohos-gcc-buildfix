@@ -321,20 +321,20 @@ setup_canadian_cross_env() {
             CXX_FOR_BUILD="g++"
         fi
     fi
-    # Add -B flag to tell the compiler where to find the native binutils (ld, as, etc.)
-    # This is critical for Canadian Cross builds where PATH is modified to include
-    # cross-compiler tools, which could confuse collect2's linker search.
-    CC_FOR_BUILD="${CC_FOR_BUILD} -B${native_bindir}"
-    CXX_FOR_BUILD="${CXX_FOR_BUILD} -B${native_bindir}"
-    # Only export the flags, not the compiler commands
-    export CFLAGS_FOR_BUILD="-g -O2"
-    export CXXFLAGS_FOR_BUILD="-g -O2"
-    export LDFLAGS_FOR_BUILD=""
+    # Add -B flag via CFLAGS_FOR_BUILD to tell the compiler where to find the native 
+    # binutils (ld, as, etc.). This is critical for Canadian Cross builds where PATH 
+    # is modified to include cross-compiler tools, which could confuse collect2's 
+    # linker search. We cannot add -B to CC_FOR_BUILD because env command cannot
+    # handle values with spaces properly.
+    export CFLAGS_FOR_BUILD="-g -O2 -B${native_bindir}"
+    export CXXFLAGS_FOR_BUILD="-g -O2 -B${native_bindir}"
+    export LDFLAGS_FOR_BUILD="-B${native_bindir}"
 
     msg "Canadian Cross environment configured:"
     echo "  PATH includes: ${STAGE1_PREFIX}/bin"
     echo "  CC=${CC}"
     echo "  CC_FOR_BUILD=${CC_FOR_BUILD} (not exported, to avoid GMP configure race)"
+    echo "  CFLAGS_FOR_BUILD=${CFLAGS_FOR_BUILD}"
     echo "  GCC_FOR_TARGET=${GCC_FOR_TARGET}"
     echo "  CFLAGS=${CFLAGS}"
     echo "  LDFLAGS=${LDFLAGS}"
